@@ -15,7 +15,7 @@ namespace Tests
             public byte[] GetDiskId() => new byte[ 32 ];
         }
 
-        [ Fact ]
+        [Fact]
         public void GetOSProviderReturnsDefaultForOSMachineInfoProvider()
         {
             IMachineInfoProvider machineInfoProvider = HardwareUtils.GetOSProvider();
@@ -43,7 +43,7 @@ namespace Tests
             }
         }
 
-        [ Fact ]
+        [Fact]
         public void InitSetsCustomMachineInfoProvider()
         {
             HardwareUtils.Init( new CustomMachineInfoProvider() );
@@ -51,7 +51,7 @@ namespace Tests
             Assert.IsType<CustomMachineInfoProvider>( HardwareUtils.MachineInfoProvider );
         }
 
-        [ Fact ]
+        [Fact]
         public void InitSetsDefaultMachineInfoProvider()
         {
             IMachineInfoProvider machineInfoProvider = HardwareUtils.GetOSProvider();
