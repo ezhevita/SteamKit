@@ -59,7 +59,5 @@ namespace Tests
             Assert.NotNull( HardwareUtils.MachineInfoProvider );
             Assert.IsAssignableFrom<DefaultInfoProvider>( HardwareUtils.MachineInfoProvider );
         }
-        
-        
     }
 }
