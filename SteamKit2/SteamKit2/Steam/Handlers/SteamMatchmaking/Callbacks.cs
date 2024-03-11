@@ -24,8 +24,9 @@ namespace SteamKit2
             /// </summary>
             public List<Lobby> Lobbies { get; }
 
-            internal GetLobbyListCallback( uint appId, EResult res, List<Lobby> lobbies )
+            internal GetLobbyListCallback( JobID jobId, uint appId, EResult res, List<Lobby> lobbies )
             {
+                JobID = jobId;
                 AppID = appId;
                 Result = res;
                 Lobbies = lobbies;
@@ -138,9 +139,9 @@ namespace SteamKit2
             /// The joined <see cref="Lobby"/>, when <see cref="ChatRoomEnterResponse"/> equals
             /// <see cref="EChatRoomEnterResponse.Success"/>, otherwise <c>null</c>
             /// </summary>
-            public Lobby Lobby { get; }
+            public Lobby? Lobby { get; }
 
-            internal JoinLobbyCallback( JobID jobId, uint appId, EChatRoomEnterResponse res, Lobby lobby )
+            internal JoinLobbyCallback( JobID jobId, uint appId, EChatRoomEnterResponse res, Lobby? lobby )
             {
                 JobID = jobId;
                 AppID = appId;

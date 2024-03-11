@@ -1,10 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
-using System.Net;
 using System.Net.Http;
-using System.Threading;
 using System.Threading.Tasks;
 using SteamKit2;
 using SteamKit2.Discovery;
@@ -52,20 +49,25 @@ namespace Tests
         [Fact]
         public void DefaultHttpClientFactory()
         {
-            using (var client = configuration.HttpClientFactory())
-            {
-                Assert.NotNull(client);
-                Assert.IsType<HttpClient>(client);
+            using var client = configuration.HttpClientFactory();
+            Assert.NotNull( client );
+            Assert.IsType<HttpClient>( client );
 
-                var steamKitAssemblyVersion = typeof( SteamClient ).Assembly.GetName().Version;
-                Assert.Equal("SteamKit/" + steamKitAssemblyVersion.ToString(fieldCount: 3), client.DefaultRequestHeaders.UserAgent.ToString());
-            }
+            var steamKitAssemblyVersion = typeof( SteamClient ).Assembly.GetName().Version;
+            Assert.Equal( "SteamKit/" + steamKitAssemblyVersion.ToString( fieldCount: 3 ), client.DefaultRequestHeaders.UserAgent.ToString() );
+        }
+
+        [Fact]
+        public void DefaultMachineInfoProvider()
+        {
+            Assert.NotNull(configuration.MachineInfoProvider);
+            Assert.IsNotType<DefaultMachineInfoProvider>(configuration.MachineInfoProvider);
         }
 
         [Fact]
         public void ServerListProviderIsNothingFancy()
         {
-            Assert.IsType<NullServerListProvider>(configuration.ServerListProvider);
+            Assert.IsType<MemoryServerListProvider>(configuration.ServerListProvider);
         }
 
         [Fact]
@@ -109,6 +111,7 @@ namespace Tests
                  .WithConnectionTimeout(TimeSpan.FromMinutes(1))
                  .WithDefaultPersonaStateFlags(EClientPersonaStateFlag.SourceID)
                  .WithHttpClientFactory(() => { var c = new HttpClient(); c.DefaultRequestHeaders.Add("X-SteamKit-Tests", "true"); return c; })
+                 .WithMachineInfoProvider(new CustomMachineInfoProvider())
                  .WithProtocolTypes(ProtocolTypes.WebSocket | ProtocolTypes.Udp)
                  .WithServerListProvider(new CustomServerListProvider())
                  .WithUniverse(EUniverse.Internal)
@@ -139,10 +142,15 @@ namespace Tests
         [Fact]
         public void HttpClientFactoryIsConfigured()
         {
-            using (var client = configuration.HttpClientFactory())
-            {
-                Assert.Equal("true", client.DefaultRequestHeaders.GetValues("X-SteamKit-Tests").FirstOrDefault());
-            }
+            using var client = configuration.HttpClientFactory();
+            Assert.Equal( "true", client.DefaultRequestHeaders.GetValues( "X-SteamKit-Tests" ).FirstOrDefault() );
+        }
+
+        [Fact]
+        public void MachineInfoProviderIsConfigured()
+        {
+            Assert.IsType<CustomMachineInfoProvider>(configuration.MachineInfoProvider);
+            Assert.Same(configuration.MachineInfoProvider, configuration.MachineInfoProvider);
         }
 
         [Fact]
@@ -185,6 +193,16 @@ namespace Tests
         public void NoWebAPIKey()
         {
             Assert.Equal("T0PS3kR1t", configuration.WebAPIKey);
+        }
+
+        class CustomMachineInfoProvider : IMachineInfoProvider
+        {
+            byte[] IMachineInfoProvider.GetDiskId()
+                => throw new NotImplementedException();
+            byte[] IMachineInfoProvider.GetMacAddress()
+                => throw new NotImplementedException();
+            byte[] IMachineInfoProvider.GetMachineGuid()
+                => throw new NotImplementedException();
         }
 
         class CustomServerListProvider : IServerListProvider

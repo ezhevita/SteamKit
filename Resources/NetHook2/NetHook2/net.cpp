@@ -7,49 +7,58 @@
 
 #include "logger.h"
 #include "csimplescan.h"
+#include "steamclient.h"
 
 
 namespace NetHook
 {
 
 
-BBuildAndAsyncSendFrameFn BBuildAndAsyncSendFrame_Orig = NULL;
-RecvPktFn RecvPkt_Orig = NULL;
+BBuildAndAsyncSendFrameFn BBuildAndAsyncSendFrame_Orig = nullptr;
+RecvPktFn RecvPkt_Orig = nullptr;
 
-CNet::CNet()
-	: m_RecvPktDetour(NULL),
-	  m_BuildDetour(NULL)
+CNet::CNet() noexcept
+	: m_RecvPktDetour(nullptr),
+	  m_BuildDetour(nullptr)
 {
-	CSimpleScan steamClientScan("steamclient.dll");
+	CSimpleScan steamClientScan(STEAMCLIENT_DLL);
 
-	BBuildAndAsyncSendFrameFn pBuildFunc = NULL;
-	bool bFoundBuildFunc = steamClientScan.FindFunction(
-		"\x55\x8B\xEC\x83\xEC\x00\x53\x6A\x04\x6A\x00\x6A\x06\x8B\xD9\x8D\x4D\xEC\x6A\x00\x68",
-		"xxxxx?xxxxxxxxxxxxxxx",
-		(void **)&pBuildFunc
+	BBuildAndAsyncSendFrameFn pBuildFunc = nullptr;
+	const bool bFoundBuildFunc = steamClientScan.FindFunction(
+#ifdef X64BITS
+		"\x48\x8B\xC4\x55\x53\x48\x8D\x68\xA1\x48\x81\xEC\xCC\xCC\xCC\xCC\x48\x89\x70\x10\x33",
+		"xxxxxxxxxxxx????xxxxx",
+#else
+		"\x55\x8B\xEC\x83\xEC\x70\xA1\x2A\x2A\x2A\x2A\x53\x8B\xD9",
+		"xxxxxxx????xxx",
+#endif
+		(void**)&pBuildFunc
 	);
 
 	BBuildAndAsyncSendFrame_Orig = pBuildFunc;
 
-	g_pLogger->LogConsole("CWebSocketConnection::BBuildAndAsyncSendFrame = 0x%x\n", BBuildAndAsyncSendFrame_Orig);
+	g_pLogger->LogConsole("CWebSocketConnection::BBuildAndAsyncSendFrame = 0x%p\n", BBuildAndAsyncSendFrame_Orig);
 
-	RecvPktFn pRecvPktFunc = NULL;
-	bool bFoundRecvPktFunc = steamClientScan.FindFunction(
-		"\x55\x8B\xEC\x81\xEC\x88\x04\x00\x00\x53\x56\x57\x6A\x01\xFF",
-		"xxxxx?xxxxxxxxx",
-		(void **)&pRecvPktFunc
+	RecvPktFn pRecvPktFunc = nullptr;
+	const bool bFoundRecvPktFunc = steamClientScan.FindFunction(
+#ifdef X64BITS
+		"\x48\x8B\xC4\x55\x48\x8D\xA8\xCC\xCC\xCC\xCC\x48\x81\xEC\xCC\xCC\xCC\xCC\x48\x89\x58\x08\x48\x8B",
+		"xxxxxxx????xxx????xxxxxx",
+#else
+		"\x55\x8B\xEC\x81\xEC\x00\x00\x00\x00\xA1\x00\x00\x00\x00\x56\x57\x8B\xF9",
+		"xxxxx????x????xxxx",
+#endif
+		(void**)&pRecvPktFunc
 	);
 
 	RecvPkt_Orig = pRecvPktFunc;
 
-	g_pLogger->LogConsole("CCMInterface::RecvPkt = 0x%x\n", RecvPkt_Orig);
+	g_pLogger->LogConsole("CCMInterface::RecvPkt = 0x%p\n", RecvPkt_Orig);
 
-
-	RecvPktFn thisRecvPktFunc = CNet::RecvPkt;
 
 	if (bFoundBuildFunc)
 	{
-		BBuildAndAsyncSendFrameFn thisBuildFunc = CNet::BBuildAndAsyncSendFrame;
+		BBuildAndAsyncSendFrameFn thisBuildFunc = (BBuildAndAsyncSendFrameFn)CNet::BBuildAndAsyncSendFrame;
 
 		m_BuildDetour = new CSimpleDetour((void **)&BBuildAndAsyncSendFrame_Orig, (void *)thisBuildFunc);
 		m_BuildDetour->Attach();
@@ -63,7 +72,7 @@ CNet::CNet()
 
 	if (bFoundRecvPktFunc)
 	{
-		RecvPktFn thisRecvPktFunc = CNet::RecvPkt;
+		RecvPktFn thisRecvPktFunc = (RecvPktFn)CNet::RecvPkt;
 
 		m_RecvPktDetour = new CSimpleDetour((void **)&RecvPkt_Orig, (void *)thisRecvPktFunc);
 		m_RecvPktDetour->Attach();
@@ -93,11 +102,18 @@ CNet::~CNet()
 }
 
 
-bool CNet::BBuildAndAsyncSendFrame(void *webSocketConnection, void *unused, EWebSocketOpCode eWebSocketOpCode, const uint8 *pubData, uint32 cubData)
+bool CNet::BBuildAndAsyncSendFrame(
+	void *webSocketConnection,
+#ifndef X64BITS
+	void *,
+#endif
+	EWebSocketOpCode eWebSocketOpCode, 
+	const uint8 *pubData, 
+	uint32 cubData)
 {
-	if (eWebSocketOpCode == k_eWebSocketOpCode_Binary)
+	if (eWebSocketOpCode == EWebSocketOpCode::k_eWebSocketOpCode_Binary)
 	{
-		g_pLogger->LogNetMessage(k_eNetOutgoing, pubData, cubData);
+		g_pLogger->LogNetMessage(ENetDirection::k_eNetOutgoing, pubData, cubData);
 	}
 	else
 	{
@@ -106,14 +122,19 @@ bool CNet::BBuildAndAsyncSendFrame(void *webSocketConnection, void *unused, EWeb
 		);
 	}
 
-	return (*BBuildAndAsyncSendFrame_Orig)(webSocketConnection, unused, eWebSocketOpCode, pubData, cubData);
+	return (*BBuildAndAsyncSendFrame_Orig)(webSocketConnection, eWebSocketOpCode, pubData, cubData);
 }
 
-void CNet::RecvPkt(void *cmConnection, void *unused, CNetPacket *pPacket)
+void CNet::RecvPkt(
+	void *cmConnection,
+#ifndef X64BITS
+	void *,
+#endif
+	CNetPacket *pPacket)
 {
-	g_pLogger->LogNetMessage(k_eNetIncoming, pPacket->m_pubData, pPacket->m_cubData);
+	g_pLogger->LogNetMessage(ENetDirection::k_eNetIncoming, pPacket->m_pubData, pPacket->m_cubData);
 
-	(*RecvPkt_Orig)(cmConnection, unused, pPacket);
+	(*RecvPkt_Orig)(cmConnection, pPacket);
 }
 
 

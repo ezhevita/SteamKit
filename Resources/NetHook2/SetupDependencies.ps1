@@ -1,55 +1,58 @@
-$NetHook2DependenciesTemporaryDirectory = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "nethook2-dependencies")
-$ZLibSourceZipUrl = "http://zlib.net/zlib1211.zip"
-$ZLibSourceFile = [System.IO.Path]::Combine($NetHook2DependenciesTemporaryDirectory, "zlib.zip")
-$ZLibSourceInnerFolderName = "zlib-1.2.11"
-$ProtobufSourceZipUrl = "https://github.com/google/protobuf/releases/download/v2.5.0/protobuf-2.5.0.zip"
-$ProtobufSourceFile = [System.IO.Path]::Combine($NetHook2DependenciesTemporaryDirectory, "protobuf.zip")
-$ProtobufSourceInnerFolderName = "protobuf-2.5.0"
+if (!$env:DevEnvDir) {
+    $vsWhere = Join-Path -Path ${env:ProgramFiles(x86)} -ChildPath 'Microsoft Visual Studio\Installer\vswhere.exe'
+    $vsInstallDir = (. $vsWhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath) |
+        Select-Object -First 1
 
-Set-Location $PSScriptRoot
-
-if (-Not (Test-Path $NetHook2DependenciesTemporaryDirectory))
-{
-    New-Item -Path $NetHook2DependenciesTemporaryDirectory -Type Directory | Out-Null
-}
-
-Write-Host Loading System.IO.Compression...
-[Reflection.Assembly]::LoadWithPartialName("System.IO.Compression")
-[Reflection.Assembly]::LoadWithPartialName("System.IO.Compression.FileSystem")
-
-$ZLibFolderPath = [IO.Path]::Combine($NetHook2DependenciesTemporaryDirectory, $ZLibSourceInnerFolderName)
-if (-Not (Test-Path $ZLibFolderPath))
-{
-    if (-Not (Test-Path $ZLibSourceFile))
-    {
-        Write-Host Downloading ZLib headers...
-        Invoke-WebRequest $ZLibSourceZipUrl -OutFile $ZLibSourceFile
+    $modulePath = Join-Path -Path $vsInstallDir -ChildPath 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+    if (Test-Path -Path $modulePath -PathType Leaf) {
+        Import-Module $modulePath
+    } else {
+        throw "Failed to location Visual Studio PowerShell module"
     }
 
-    Write-Host Extracting ZLib...
-    $zip = [IO.Compression.ZipFile]::Open($ZLibSourceFile, [System.IO.Compression.ZipArchiveMode]::Read)
-    [IO.Compression.ZipFileExtensions]::ExtractToDirectory($zip, $NetHook2DependenciesTemporaryDirectory)
-    $zip.Dispose()
+    Enter-VsDevShell -VsInstallPath $vsInstallDir
 }
 
-Write-Host Copying ZLib into place...
-Copy-Item $ZLibFolderPath "NetHook2\zlib" -Force -Recurse
-
-$ProtobufFolderPath = [IO.Path]::Combine($NetHook2DependenciesTemporaryDirectory, $ProtobufSourceInnerFolderName)
-if (-Not (Test-Path $ProtobufFolderPath))
+if ($env:VCPKG_ROOT)
 {
-    if (-Not (Test-Path $ProtobufSourceFile))
-    {
-        Write-Host Downloading Google Protobuf Headers...
-        Invoke-WebRequest $ProtobufSourceZipUrl -OutFile $ProtobufSourceFile
+    $vcpkgTmp = Join-Path -Path $env:VCPKG_ROOT -ChildPath 'vcpkg.exe'
+    if (Test-Path -Path $vcpkgTmp -PathType Leaf) {
+        $vcpkg = $vcpkgTmp
     }
-
-    Write-Host Extracting Protobuf...
-    $zip = [IO.Compression.ZipFile]::Open($ProtobufSourceFile, [System.IO.Compression.ZipArchiveMode]::Read)
-    [IO.Compression.ZipFileExtensions]::ExtractToDirectory($zip, $NetHook2DependenciesTemporaryDirectory)
-    $zip.Dispose()
 }
 
-Write-Host Copying Protobuf into place...
-$ProtobufFolderPath = [IO.Path]::Combine($NetHook2DependenciesTemporaryDirectory, $ProtobufSourceInnerFolderName, "src", "google")
-Copy-Item $ProtobufFolderPath "NetHook2\google" -Force -Recurse
+if (!$vcpkg) {
+    $vcpkg = Get-Command -Name vcpkg -CommandType Application -ErrorAction SilentlyContinue |
+            Select-Object -First 1 |
+            Select-Object -ExpandProperty Source
+    if ($vcpkg) {
+        Write-Host "Found vcpkg at '$vcpkg' from PATH"
+    } else {
+        if ($env:CI) {
+            Write-Host "Downloading vcpkg"
+            $vcpkgDir = Join-Path -Path (Get-Location.Path) -ChildPath 'vcpkg'
+            if (!(Test-Path -Path $vcpkgDir)) {
+                git clone --depth 1 "https://github.com/Microsoft/vcpkg.git"
+            } else {
+                Set-Location vcpkg
+                git pull
+                Set-Location ..
+            }
+    
+            .\vcpkg\bootstrap-vcpkg.bat
+    
+            $env:Path = "PATH=$vcpkgDir;$env:Path"
+        }
+        else {
+            Write-Warning "vcpkg is required but not found. Please see https://vcpkg.io/en/getting-started to install it"
+        }
+    }
+}
+else {
+    Write-Host "Found vcpkg at '$vcpkg' from VCPKG_ROOT"
+}
+
+# DO need to call this
+. $vcpkg integrate install
+
+# todo: compile or download protoc and generate steammessages_base.pb.{h|cpp}

@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.Dynamic;
 using System.IO;
 using System.Linq;
-using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Runtime.ExceptionServices;
@@ -12,22 +11,50 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Web;
+using ProtoBuf;
 
 namespace SteamKit2
 {
     /// <summary>
     /// Utility class for interacting with the Steam Web API.
     /// </summary>
-    public sealed class WebAPI
+    public sealed partial class WebAPI
     {
+        /// <summary>
+        /// Represents a response to a WebAPI request.
+        /// </summary>
+        public sealed class WebAPIResponse<TResponse>
+        {
+            /// <summary>
+            /// Gets the result of the response.
+            /// </summary>
+            public EResult Result { get; }
+
+            /// <summary>
+            /// Gets the body of the response.
+            /// </summary>
+            public TResponse Body { get; }
+
+            /// <summary>
+            /// Constructs <see cref="WebAPIResponse{TResponse}"/> object.
+            /// </summary>
+            /// <param name="body">The response body.</param>
+            /// <param name="result">The result.</param>
+            internal WebAPIResponse( EResult result, TResponse body )
+            {
+                Result = result;
+                Body = body;
+            }
+        }
+
         /// <summary>
         /// The default base address used for the Steam Web API.
         /// A different base address can be specified in a <see cref="SteamConfiguration"/> object, or
         /// as a function argument where overloads are available.
         /// </summary>
-        public static Uri DefaultBaseAddress { get; } = new Uri("https://api.steampowered.com/", UriKind.Absolute);
+        public static Uri DefaultBaseAddress { get; } = new Uri( "https://api.steampowered.com/", UriKind.Absolute );
 
-        internal static TimeSpan DefaultTimeout { get; } = TimeSpan.FromSeconds(100);
+        internal static TimeSpan DefaultTimeout { get; } = TimeSpan.FromSeconds( 100 );
 
         /// <summary>
         /// Represents a single interface that exists within the Web API.
@@ -68,7 +95,7 @@ namespace SteamKit2
             /// <exception cref="HttpRequestException">An network error occurred when performing the request.</exception>
             /// <exception cref="WebAPIRequestException">A network error occurred when performing the request.</exception>
             /// <exception cref="InvalidDataException">An error occured when parsing the response from the WebAPI.</exception>
-            public KeyValue Call( string func, int version = 1, Dictionary<string, object> args = null )
+            public KeyValue Call( string func, int version = 1, Dictionary<string, object?>? args = null )
                 => Call( HttpMethod.Get, func, version, args );
 
 
@@ -84,7 +111,7 @@ namespace SteamKit2
             /// <exception cref="HttpRequestException">An network error occurred when performing the request.</exception>
             /// <exception cref="WebAPIRequestException">A network error occurred when performing the request.</exception>
             /// <exception cref="InvalidDataException">An error occured when parsing the response from the WebAPI.</exception>
-            public KeyValue Call( HttpMethod method, string func, int version = 1, Dictionary<string, object> args = null )
+            public KeyValue Call( HttpMethod method, string func, int version = 1, Dictionary<string, object?>? args = null )
             {
                 var callTask = asyncInterface.CallAsync( method, func, version, args );
 
@@ -147,7 +174,7 @@ namespace SteamKit2
             /// <exception cref="ArgumentOutOfRangeException">
             /// The function version number specified was out of range.
             /// </exception>
-            public override bool TryInvokeMember( InvokeMemberBinder binder, object[] args, out object result )
+            public override bool TryInvokeMember( InvokeMemberBinder binder, object?[]? args, out object result )
             {
                 bool success = asyncInterface.TryInvokeMember( binder, args, out result );
 
@@ -166,12 +193,15 @@ namespace SteamKit2
         /// This is a dynamic object that allows function calls to interfaces with minimal code.
         /// This version of the <see cref="Interface"/> class makes use of TPL Tasks to provide an asynchronous API.
         /// </summary>
-        public sealed class AsyncInterface : DynamicObject, IDisposable
+        public sealed partial class AsyncInterface : DynamicObject, IDisposable
         {
             internal readonly HttpClient httpClient;
 
             internal readonly string iface;
             internal readonly string apiKey;
+
+            [GeneratedRegex( @"(?<name>[a-zA-Z]+)(?<version>[0-9]*)" )]
+            private static partial Regex FuncNameRegex();
 
             /// <summary>
             /// Gets or sets the timeout value in milliseconds for any web requests made to the WebAPI.
@@ -181,14 +211,9 @@ namespace SteamKit2
             /// </value>
             public TimeSpan Timeout
             {
-                    get => httpClient.Timeout;
-                    set => httpClient.Timeout = value;
+                get => httpClient.Timeout;
+                set => httpClient.Timeout = value;
             }
-
-            static Regex funcNameRegex = new Regex(
-                @"(?<name>[a-zA-Z]+)(?<version>\d*)",
-                RegexOptions.Compiled | RegexOptions.IgnoreCase
-            );
 
             internal AsyncInterface( HttpClient httpClient, string iface, string apiKey )
             {
@@ -197,6 +222,81 @@ namespace SteamKit2
                 this.apiKey = apiKey;
             }
 
+            /// <summary>
+            /// Manually calls the specified Web API function with the provided details.
+            /// </summary>
+            /// <typeparam name="T">Protobuf type of the response message.</typeparam>
+            /// <param name="func">The function name to call.</param>
+            /// <param name="version">The version of the function to call.</param>
+            /// <param name="args">A dictionary of string key value pairs representing arguments to be passed to the API.</param>
+            /// <param name="method">The http request method. Either "POST" or "GET".</param>
+            /// <returns>A <see cref="Task{T}"/> that contains object representing the results of the Web API call.</returns>
+            /// <exception cref="ArgumentNullException">The function name or request method provided were <c>null</c>.</exception>
+            /// <exception cref="HttpRequestException">An network error occurred when performing the request.</exception>
+            /// <exception cref="WebAPIRequestException">A network error occurred when performing the request.</exception>
+            /// <exception cref="ProtoException">An error occured when parsing the response from the WebAPI.</exception>
+            public async Task<T> CallProtobufAsync<T>( HttpMethod method, string func, int version = 1, Dictionary<string, object?>? args = null )
+            {
+                var response = await CallAsyncInternal( method, func, version, args, "protobuf_raw" );
+
+                using var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait( false );
+
+                var body = Serializer.Deserialize<T>( stream );
+
+                return body;
+            }
+
+            /// <summary>
+            /// Manually calls the specified Web API function with the provided details.
+            /// </summary>
+            /// <typeparam name="TRequest">Protobuf type of the request message.</typeparam>
+            /// <typeparam name="TResponse">Protobuf type of the response message.</typeparam>
+            /// <param name="func">The function name to call.</param>
+            /// <param name="version">The version of the function to call.</param>
+            /// <param name="request">A protobuf object representing arguments to be passed to the API.</param>
+            /// <param name="method">The http request method. Either "POST" or "GET".</param>
+            /// <returns>A <see cref="Task{T}"/> that contains object representing the results of the Web API call.</returns>
+            /// <exception cref="ArgumentNullException">The function name or request method provided were <c>null</c>.</exception>
+            /// <exception cref="HttpRequestException">An network error occurred when performing the request.</exception>
+            /// <exception cref="WebAPIRequestException">A network error occurred when performing the request.</exception>
+            /// <exception cref="ProtoException">An error occured when parsing the response from the WebAPI.</exception>
+            public async Task<WebAPIResponse<TResponse>> CallProtobufAsync<TResponse, TRequest>( HttpMethod method, string func, TRequest request, int version = 1 )
+                where TResponse : IExtensible, new()
+                where TRequest : IExtensible, new()
+            {
+                ArgumentNullException.ThrowIfNull( method );
+
+                ArgumentNullException.ThrowIfNull( func );
+
+                if ( request == null )
+                {
+                    throw new ArgumentNullException( nameof( request ) );
+                }
+
+                using var inputPayload = new MemoryStream();
+                Serializer.Serialize<TRequest>( inputPayload, request );
+
+                var base64 = Convert.ToBase64String( inputPayload.ToArray() );
+                var args = new Dictionary<string, object?>
+                {
+                    { "input_protobuf_encoded", base64 },
+                };
+
+                var response = await CallAsyncInternal( method, func, version, args, "protobuf_raw" );
+                var eresult = EResult.Invalid;
+
+                using var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait( false );
+
+                if ( response.Headers.TryGetValues( "x-eresult", out var result ) && int.TryParse( result.First(), out var resultInt ) )
+                {
+                    eresult = ( EResult )resultInt;
+                }
+
+                var body = Serializer.Deserialize<TResponse>( stream );
+                var apiResponse = new WebAPIResponse<TResponse>( eresult, body );
+
+                return apiResponse;
+            }
 
             /// <summary>
             /// Manually calls the specified Web API function with the provided details.
@@ -210,87 +310,100 @@ namespace SteamKit2
             /// <exception cref="HttpRequestException">An network error occurred when performing the request.</exception>
             /// <exception cref="WebAPIRequestException">A network error occurred when performing the request.</exception>
             /// <exception cref="InvalidDataException">An error occured when parsing the response from the WebAPI.</exception>
-            public Task<KeyValue> CallAsync( HttpMethod method, string func, int version = 1, Dictionary<string, object> args = null )
+            public async Task<KeyValue> CallAsync( HttpMethod method, string func, int version = 1, Dictionary<string, object?>? args = null )
             {
-                var task = CallAsyncCore( method, func, version, args );
+                var response = await CallAsyncInternal( method, func, version, args, "vdf" );
 
-                task.ContinueWith( t =>
+                using var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait( false );
+
+                try
                 {
-                    // we need to observe the exception in this OnlyOnFaulted continuation if our task throws an exception but we're not able to observe it
-                    // (such as when waiting for the task times out, and an exception is thrown later)
-                    // see: http://msdn.microsoft.com/en-us/library/dd997415.aspx
-
-                    DebugLog.WriteLine("WebAPI", "Threw an unobserved exception: {0}", t.Exception);
-
-                }, TaskContinuationOptions.OnlyOnFaulted );
-
-                return task;
+                    var kv = new KeyValue();
+                    kv.ReadAsText( stream );
+                    return kv;
+                }
+                catch ( Exception ex )
+                {
+                    throw new InvalidDataException(
+                        "An internal error occurred when attempting to parse the response from the WebAPI server. This can indicate a change in the VDF format.",
+                        ex
+                    );
+                }
             }
-                
-            async Task<KeyValue> CallAsyncCore( HttpMethod method, string func, int version = 1, Dictionary<string, object> args = null )
+
+            private async Task<HttpResponseMessage> CallAsyncInternal( HttpMethod method, string func, int version, Dictionary<string, object?>? args, string expectedFormat )
             {
-                if ( method == null )
+                ArgumentNullException.ThrowIfNull( method );
+
+                ArgumentNullException.ThrowIfNull( func );
+
+                var formatProvided = false;
+
+                if ( args != null && args.TryGetValue( "format", out var format ) )
                 {
-                    throw new ArgumentNullException( nameof(method) );
+                    formatProvided = true;
+
+                    if ( format is not string formatText  || formatText != "vdf" )
+                    {
+                        throw new ArgumentException( $"Unsupported 'format' value '{format}'. Format must either be '{expectedFormat}' or omitted.", nameof( args ) );
+                    }
                 }
 
-                if ( func == null )
-                {
-                    throw new ArgumentNullException( nameof(func) );
-                }
-
-                if ( args == null )
-                {
-                    args = new Dictionary<string, object>();
-                }
-
-
-                var urlBuilder = new StringBuilder();
                 var paramBuilder = new StringBuilder();
 
+                var paramsGoInQueryString = HttpMethod.Get.Equals( method );
+
+                var urlBuilder = paramsGoInQueryString ? paramBuilder : new StringBuilder();
                 urlBuilder.AppendFormat( "{0}/{1}/v{2}", iface, func, version );
 
-                var isGet = HttpMethod.Get.Equals( method );
-
-                if ( isGet )
+                if ( paramsGoInQueryString )
                 {
-                    // if we're doing a GET request, we'll build the params onto the url
-                    paramBuilder = urlBuilder;
-                    paramBuilder.Append( "/?" ); // start our GET params
+                    urlBuilder.Append( "/?" );
                 }
 
-                args.Add( "format", "vdf" );
-
-                if ( !string.IsNullOrEmpty( apiKey ) )
+                if ( !string.IsNullOrEmpty( apiKey ) && args != null && !args.ContainsKey( "key" ) )
                 {
-                    args.Add( "key", apiKey );
+                    paramBuilder.Append( "key=" );
+                    paramBuilder.Append( Uri.EscapeDataString( apiKey ) );
+                    paramBuilder.Append( '&' );
                 }
 
-                // append any args
-                paramBuilder.Append( string.Join( "&", args.Select( kvp =>
+                if ( !formatProvided )
                 {
-                    string key = HttpUtility.UrlEncode( kvp.Key );
-                    string value;
+                    paramBuilder.Append( "format=" );
+                    paramBuilder.Append( expectedFormat );
+                }
 
-                    if ( kvp.Value == null )
+                if ( args != null )
+                {
+                    foreach ( var (key, value) in args )
                     {
-                        value = string.Empty;
-                    }
-                    else if ( kvp.Value is byte[] buffer )
-                    {
-                        value = HttpUtility.UrlEncode( buffer );
-                    }
-                    else
-                    {
-                        value = HttpUtility.UrlEncode( kvp.Value.ToString() );
-                    }
+                        paramBuilder.Append( '&' );
+                        paramBuilder.Append( Uri.EscapeDataString( key ) );
+                        paramBuilder.Append( '=' );
 
-                    return string.Format( "{0}={1}", key, value );
-                } ) ) );
-                
-                var request = new HttpRequestMessage( method, urlBuilder.ToString() );
+                        switch ( value )
+                        {
+                            case null:
+                                break;
 
-                if ( !isGet )
+                            case byte[] byteArrayValue:
+                                paramBuilder.Append( HttpUtility.UrlEncode( byteArrayValue ) );
+                                break;
+
+                            default:
+                                if ( value.ToString() is { } valueString )
+                                {
+                                    paramBuilder.Append( Uri.EscapeDataString( valueString ) );
+                                }
+                                break;
+                        }
+                    }
+                }
+
+                using var request = new HttpRequestMessage( method, urlBuilder.ToString() );
+
+                if ( !paramsGoInQueryString )
                 {
                     request.Content = new StringContent( paramBuilder.ToString() );
                     request.Content.Headers.ContentType = new MediaTypeHeaderValue( "application/x-www-form-urlencoded" );
@@ -300,27 +413,10 @@ namespace SteamKit2
 
                 if ( !response.IsSuccessStatusCode )
                 {
-                    throw new WebAPIRequestException( $"Response status code does not indicate success: {response.StatusCode} ({response.ReasonPhrase}).", response );
+                    throw new WebAPIRequestException( $"Response status code does not indicate success: {response.StatusCode:D} ({response.ReasonPhrase}).", response );
                 }
 
-                var kv = new KeyValue();
-
-                using ( var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait( false ) )
-                {
-                    try
-                    {
-                        kv.ReadAsText( stream );
-                    }
-                    catch ( Exception ex )
-                    {
-                        throw new InvalidDataException(
-                            "An internal error occurred when attempting to parse the response from the WebAPI server. This can indicate a change in the VDF format.",
-                            ex
-                        );
-                    }
-                }
-
-                return kv;
+                return response;
             }
 
             /// <summary>
@@ -364,11 +460,12 @@ namespace SteamKit2
             /// <exception cref="ArgumentOutOfRangeException">
             /// The function version number specified was out of range.
             /// </exception>
-            public override bool TryInvokeMember( InvokeMemberBinder binder, object[] args, out object result )
+            public override bool TryInvokeMember( InvokeMemberBinder binder, object?[]? args, out object result )
             {
-                IDictionary<string, object> methodArgs;
+                IDictionary<string, object?> methodArgs;
+                args ??= [];
 
-                if ( args.Length == 1 && binder.CallInfo.ArgumentNames.Count == 0 && args[ 0 ] is IDictionary<string, object> explicitArgs )
+                if ( args.Length == 1 && binder.CallInfo.ArgumentNames.Count == 0 && args[ 0 ] is IDictionary<string, object?> explicitArgs )
                 {
                     methodArgs = explicitArgs;
                 }
@@ -379,27 +476,31 @@ namespace SteamKit2
                 else
                 {
                     methodArgs = Enumerable.Range( 0, args.Length )
-                        .ToDictionary( 
+                        .ToDictionary(
                             x => binder.CallInfo.ArgumentNames[ x ],
                             x => args[ x ] );
                 }
 
-                var apiArgs = new Dictionary<string, object>();
+                var apiArgs = new Dictionary<string, object?>();
                 var requestMethod = HttpMethod.Get;
 
-                foreach ( var ( argName, argValue ) in methodArgs )
+                foreach ( var (argName, argValue) in methodArgs )
                 {
                     // method is a reserved param for selecting the http request method
                     if ( argName.Equals( "method", StringComparison.OrdinalIgnoreCase ) )
                     {
-                        requestMethod = new HttpMethod( argValue.ToString() );
+                        if ( !( argValue?.ToString() is { } argValueString ) )
+                        {
+                            throw new ArgumentException( "The argument 'method' must not be null or have a null string representation." );
+                        }
+
+                        requestMethod = new HttpMethod( argValueString );
                         continue;
                     }
                     // flatten lists
-                    else if ( argValue is IEnumerable && !( argValue is string || argValue is byte[] ) )
+                    else if ( argValue is IEnumerable enumerable && !( argValue is string || argValue is byte[] ) )
                     {
                         int index = 0;
-                        var enumerable = argValue as IEnumerable;
 
                         foreach ( object value in enumerable )
                         {
@@ -413,7 +514,7 @@ namespace SteamKit2
                     apiArgs.Add( argName, argValue );
                 }
 
-                Match match = funcNameRegex.Match( binder.Name );
+                Match match = FuncNameRegex().Match( binder.Name );
 
                 if ( !match.Success )
                 {
@@ -451,15 +552,9 @@ namespace SteamKit2
         /// <returns>A dynamic <see cref="Interface"/> object to interact with the Web API.</returns>
         public static Interface GetInterface( Uri baseAddress, string iface, string apiKey = "" )
         {
-            if ( baseAddress == null )
-            {
-                throw new ArgumentNullException( nameof(baseAddress) );
-            }
+            ArgumentNullException.ThrowIfNull( baseAddress );
 
-            if ( iface == null )
-            {
-                throw new ArgumentNullException( nameof(iface) );
-            }
+            ArgumentNullException.ThrowIfNull( iface );
 
             return new Interface( CreateDefaultHttpClient( baseAddress ), iface, apiKey );
         }
@@ -472,10 +567,7 @@ namespace SteamKit2
         /// <returns>A dynamic <see cref="Interface"/> object to interact with the Web API.</returns>
         public static Interface GetInterface( string iface, string apiKey = "" )
         {
-            if ( iface == null )
-            {
-                throw new ArgumentNullException( nameof(iface) );
-            }
+            ArgumentNullException.ThrowIfNull( iface );
 
             return new Interface( CreateDefaultHttpClient( DefaultBaseAddress ), iface, apiKey );
         }
@@ -488,10 +580,7 @@ namespace SteamKit2
         /// <returns>A dynamic <see cref="AsyncInterface"/> object to interact with the Web API.</returns>
         public static AsyncInterface GetAsyncInterface( string iface, string apiKey = "" )
         {
-            if ( iface == null )
-            {
-                throw new ArgumentNullException( nameof(iface) );
-            }
+            ArgumentNullException.ThrowIfNull( iface );
 
             return new AsyncInterface( CreateDefaultHttpClient( DefaultBaseAddress ), iface, apiKey );
         }
@@ -505,16 +594,10 @@ namespace SteamKit2
         /// <returns>A dynamic <see cref="AsyncInterface"/> object to interact with the Web API.</returns>
         public static AsyncInterface GetAsyncInterface( Uri baseAddress, string iface, string apiKey = "" )
         {
-            if ( baseAddress == null )
-            {
-                throw new ArgumentNullException( nameof(baseAddress) );
-            }
+            ArgumentNullException.ThrowIfNull( baseAddress );
 
-            if ( iface == null )
-            {
-                throw new ArgumentNullException( nameof(iface) );
-            }
-            
+            ArgumentNullException.ThrowIfNull( iface );
+
             return new AsyncInterface( CreateDefaultHttpClient( baseAddress ), iface, apiKey );
         }
 

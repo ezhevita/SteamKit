@@ -4,10 +4,12 @@
 #include "logger.h"
 #include "crypto.h"
 #include "net.h"
+#include "steamclient.h"
 
 #include "nh2_string.h"
 
 #include "steammessages_base.pb.h"
+#include "version.h"
 
 CLogger *g_pLogger = NULL;
 CCrypto* g_pCrypto = NULL;
@@ -23,6 +25,27 @@ BOOL IsRunDll32()
 	return stringCaseInsensitiveEndsWith(szMainModulePath, "\\rundll32.exe");
 }
 
+void PrintVersionInfo()
+{
+	g_pLogger->LogConsole("Initializing NetHook2...\n");
+
+	if (*g_szBuiltFromCommitSha == '\0')
+	{
+		g_pLogger->LogConsole("Built at %s. No further build information available.\n", g_szBuildDate);
+	}
+	else
+	{
+		g_pLogger->LogConsole("Built at %s from %s", g_szBuildDate, g_szBuiltFromCommitSha);
+
+		if (g_bBuiltFromDirty)
+		{
+			g_pLogger->LogConsole("/dirty");
+		}
+
+		g_pLogger->LogConsole(" (%s)\n", g_szBuiltFromCommitDate);
+	}
+}
+
 BOOL WINAPI DllMain( HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved )
 {
 	if (IsRunDll32())
@@ -36,9 +59,11 @@ BOOL WINAPI DllMain( HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved )
 
 		g_bOwnsConsole = AllocConsole();
 
-		LoadLibrary( "steamclient.dll" );
+		LoadLibrary( STEAMCLIENT_DLL );
 
 		g_pLogger = new CLogger();
+
+		PrintVersionInfo();
 
 		g_pCrypto = new CCrypto();
 		g_pNet = new NetHook::CNet();

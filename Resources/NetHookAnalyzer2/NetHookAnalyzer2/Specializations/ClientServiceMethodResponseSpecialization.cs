@@ -8,17 +8,18 @@ namespace NetHookAnalyzer2.Specializations
 	{
 		public IEnumerable<KeyValuePair<string, object>> ReadExtraObjects(object messageObject)
 		{
-			var serviceMethodBody = messageObject as CMsgClientServiceMethodResponse;
+			var serviceMethodBody = messageObject as CMsgClientServiceMethodLegacyResponse;
 			if (serviceMethodBody == null)
 			{
 				yield break;
 			}
 
 			var name = serviceMethodBody.method_name;
-			object innerBody;
+			object innerBody = null;
 
-			using (var ms = new MemoryStream(serviceMethodBody.serialized_method_response))
+			if ( serviceMethodBody.serialized_method_response != null )
 			{
+				using var ms = new MemoryStream(serviceMethodBody.serialized_method_response);
 				innerBody = UnifiedMessagingHelpers.ReadServiceMethodBody(name, ms, x => x.ReturnType);
 			}
 

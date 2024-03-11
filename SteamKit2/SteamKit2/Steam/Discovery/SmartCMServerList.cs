@@ -52,14 +52,14 @@ namespace SteamKit2.Discovery
         {
             this.configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
 
-            servers = new Collection<ServerInfo>();
+            servers = [];
             listLock = new object();
             BadConnectionMemoryTimeSpan = TimeSpan.FromMinutes( 5 );
         }
 
         readonly SteamConfiguration configuration;
 
-        Task listTask;
+        Task? listTask;
 
         object listLock;
         Collection<ServerInfo> servers;
@@ -71,7 +71,7 @@ namespace SteamKit2.Discovery
                 // if the server list has been populated, no need to perform any additional work
                 if ( servers.Count > 0 )
                 {
-                    listTask = Task.Delay( 0 );
+                    listTask = Task.CompletedTask;
                 }
                 else if ( listTask == null || listTask.IsFaulted || listTask.IsCanceled )
                 {
@@ -86,7 +86,7 @@ namespace SteamKit2.Discovery
 
             try
             {
-                listTask.GetAwaiter().GetResult();
+                listTask!.GetAwaiter().GetResult();
                 return true;
             }
             catch ( Exception ex )
@@ -156,10 +156,7 @@ namespace SteamKit2.Discovery
         /// <param name="endpointList">The <see cref="ServerRecord"/>s to use for this <see cref="SmartCMServerList"/>.</param>
         public void ReplaceList( IEnumerable<ServerRecord> endpointList )
         {
-            if ( endpointList == null )
-            {
-                throw new ArgumentNullException( nameof(endpointList) );
-            }
+            ArgumentNullException.ThrowIfNull( endpointList );
 
             lock ( listLock )
             {
@@ -206,7 +203,19 @@ namespace SteamKit2.Discovery
         {
             lock ( listLock )
             {
-                var serverInfos = servers.Where( x => x.Record.EndPoint.Equals( endPoint ) && x.Protocol.HasFlagsFast( protocolTypes ) ).ToArray();
+                ServerInfo[] serverInfos;
+                
+                if ( quality == ServerQuality.Good )
+                {
+                    serverInfos = servers.Where( x => x.Record.EndPoint.Equals( endPoint ) && x.Protocol.HasFlagsFast( protocolTypes ) ).ToArray();
+                }
+                else
+                {
+                    // If we're marking this server for any failure, mark all endpoints for the host at the same time
+                    var host = NetHelpers.ExtractEndpointHost( endPoint ).host;
+                    serverInfos = servers.Where( x => x.Record.GetHost().Equals( host )).ToArray();
+                }
+
                 if ( serverInfos.Length == 0 )
                 {
                     return false;
@@ -216,11 +225,12 @@ namespace SteamKit2.Discovery
                 {
                     MarkServerCore( serverInfo, quality );
                 }
+                
                 return true;
             }
         }
 
-        void MarkServerCore( ServerInfo serverInfo, ServerQuality quality )
+        static void MarkServerCore( ServerInfo serverInfo, ServerQuality quality )
         {
             switch ( quality )
             {
@@ -235,12 +245,12 @@ namespace SteamKit2.Discovery
 
                 case ServerQuality.Bad:
                 {
-                        serverInfo.LastBadConnectionTimeUtc = DateTime.UtcNow;
+                    serverInfo.LastBadConnectionTimeUtc = DateTime.UtcNow;
                     break;
                 }
 
                 default:
-                    throw new ArgumentOutOfRangeException( "quality" );
+                    throw new ArgumentOutOfRangeException( nameof( quality ) );
             }
         }
 
@@ -248,7 +258,7 @@ namespace SteamKit2.Discovery
         /// Perform the actual score lookup of the server list and return the candidate
         /// </summary>
         /// <returns>IPEndPoint candidate</returns>
-        private ServerRecord GetNextServerCandidateInternal( ProtocolTypes supportedProtocolTypes )
+        private ServerRecord? GetNextServerCandidateInternal( ProtocolTypes supportedProtocolTypes )
         {
             lock ( listLock )
             {
@@ -262,9 +272,9 @@ namespace SteamKit2.Discovery
                     let server = o.server
                     let index = o.index
                     where server.Protocol.HasFlagsFast( supportedProtocolTypes )
-                    let lastBadConnectionTime = server.LastBadConnectionTimeUtc
-                    orderby lastBadConnectionTime.HasValue, index
-                    select new { EndPoint = server.Record.EndPoint, Protocol = server.Protocol };
+                    let lastBadConnectionTime = server.LastBadConnectionTimeUtc.GetValueOrDefault()
+                    orderby lastBadConnectionTime, index
+                    select new { server.Record.EndPoint, server.Protocol };
                 var result = query.FirstOrDefault();
                 
                 if ( result == null )
@@ -272,7 +282,7 @@ namespace SteamKit2.Discovery
                     return null;
                 }
 
-                DebugWrite( $"Next server candidiate: {result.EndPoint} ({result.Protocol})" );
+                DebugWrite( $"Next server candidate: {result.EndPoint} ({result.Protocol})" );
                 return new ServerRecord( result.EndPoint, result.Protocol );
             }
         }
@@ -282,7 +292,7 @@ namespace SteamKit2.Discovery
         /// </summary>
         /// <param name="supportedProtocolTypes">The minimum supported <see cref="ProtocolTypes"/> of the server to return.</param>
         /// <returns>An <see cref="System.Net.IPEndPoint"/>, or null if the list is empty.</returns>
-        public ServerRecord GetNextServerCandidate( ProtocolTypes supportedProtocolTypes )
+        public ServerRecord? GetNextServerCandidate( ProtocolTypes supportedProtocolTypes )
         {
             if ( !WaitForServersFetched() )
             {
@@ -297,10 +307,10 @@ namespace SteamKit2.Discovery
         /// </summary>
         /// <param name="supportedProtocolTypes">The minimum supported <see cref="ProtocolTypes"/> of the server to return.</param>
         /// <returns>An <see cref="System.Net.IPEndPoint"/>, or null if the list is empty.</returns>
-        public async Task<ServerRecord> GetNextServerCandidateAsync( ProtocolTypes supportedProtocolTypes )
+        public async Task<ServerRecord?> GetNextServerCandidateAsync( ProtocolTypes supportedProtocolTypes )
         {
             StartFetchingServers();
-            await listTask.ConfigureAwait( false );
+            await listTask!.ConfigureAwait( false );
 
             return GetNextServerCandidateInternal( supportedProtocolTypes );
         }
@@ -315,7 +325,7 @@ namespace SteamKit2.Discovery
 
             if ( !WaitForServersFetched() )
             {
-                return new ServerRecord[0];
+                return [];
             }
 
             lock ( listLock )

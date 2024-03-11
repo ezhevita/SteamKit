@@ -52,34 +52,27 @@ namespace SteamKit2
         }
 
         /// <summary>
-        /// Determines whether the specified <see cref="System.Object"/> is equal to this instance.
+        /// Determines whether the specified <see cref="object"/> is equal to this instance.
         /// </summary>
-        /// <param name="obj">The <see cref="System.Object"/> to compare with this instance.</param>
+        /// <param name="obj">The <see cref="object"/> to compare with this instance.</param>
         /// <returns>
-        ///   <c>true</c> if the specified <see cref="System.Object"/> is equal to this instance; otherwise, <c>false</c>.
+        ///   <c>true</c> if the specified <see cref="object"/> is equal to this instance; otherwise, <c>false</c>.
         /// </returns>
-        public override bool Equals( object obj )
+        public override bool Equals( object? obj )
         {
-            if ( obj == null )
+            if ( obj is UInt64Handle handle )
             {
-                return false;
+                return handle.Value == Value;
             }
 
-            UInt64Handle handle = obj as UInt64Handle;
-
-            if ( ( object )handle == null )
-            {
-                return false;
-            }
-
-            return handle.Value == Value;
+            return false;
         }
 
         /// <summary>
-        /// Returns a <see cref="System.String"/> that represents this instance.
+        /// Returns a <see cref="string"/> that represents this instance.
         /// </summary>
         /// <returns>
-        /// A <see cref="System.String"/> that represents this instance.
+        /// A <see cref="string"/> that represents this instance.
         /// </returns>
         public override string ToString()
         {
@@ -93,9 +86,9 @@ namespace SteamKit2
         /// <returns>
         /// true if the current object is equal to the other parameter; otherwise, false.
         /// </returns>
-        public bool Equals( UInt64Handle other )
+        public bool Equals( UInt64Handle? other )
         {
-            if ( ( object )other == null )
+            if ( other is null )
             {
                 return false;
             }
@@ -125,23 +118,20 @@ namespace SteamKit2
         }
 
         /// <summary>
-        /// Performs an implicit conversion from <see cref="SteamKit2.PublishedFileID"/> to <see cref="System.UInt64"/>.
+        /// Performs an implicit conversion from <see cref="SteamKit2.PublishedFileID"/> to <see cref="ulong"/>.
         /// </summary>
         /// <param name="file">The published file.</param>
         /// <returns>
         /// The result of the conversion.
         /// </returns>
-        public static implicit operator ulong( PublishedFileID file )
+        public static implicit operator ulong( PublishedFileID? file )
         {
-            if ( file == null )
-            {
-                throw new ArgumentNullException( nameof(file) );
-            }
+            ArgumentNullException.ThrowIfNull( file );
 
             return file.Value;
         }
         /// <summary>
-        /// Performs an implicit conversion from <see cref="System.UInt64"/> to <see cref="SteamKit2.PublishedFileID"/>.
+        /// Performs an implicit conversion from <see cref="ulong"/> to <see cref="SteamKit2.PublishedFileID"/>.
         /// </summary>
         /// <param name="fileId">The file id.</param>
         /// <returns>

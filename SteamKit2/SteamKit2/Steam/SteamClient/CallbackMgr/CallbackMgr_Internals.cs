@@ -28,7 +28,7 @@ namespace SteamKit2.Internal
     sealed class Callback<TCall> : Internal.CallbackBase, IDisposable
         where TCall : class, ICallbackMsg
     {
-        ICallbackMgrInternals mgr;
+        ICallbackMgrInternals? mgr;
             
         public JobID JobID { get; set; }
             
@@ -36,12 +36,12 @@ namespace SteamKit2.Internal
 
         internal override Type CallbackType { get { return typeof( TCall ); } }
             
-        public Callback(Action<TCall> func, ICallbackMgrInternals mgr = null)
+        public Callback(Action<TCall> func, ICallbackMgrInternals? mgr = null)
             : this ( func, mgr, JobID.Invalid )
         {
         }
 
-        public Callback(Action<TCall> func, ICallbackMgrInternals mgr, JobID jobID)
+        public Callback(Action<TCall> func, ICallbackMgrInternals? mgr, JobID jobID)
         {
             this.JobID = jobID;
             this.OnRun = func;
@@ -49,7 +49,7 @@ namespace SteamKit2.Internal
             AttachTo(mgr);
         }
             
-        void AttachTo( ICallbackMgrInternals mgr )
+        void AttachTo( ICallbackMgrInternals? mgr )
         {
             if ( mgr == null )
                 return;
@@ -78,14 +78,6 @@ namespace SteamKit2.Internal
             {
                 OnRun(cb);
             }
-        }
-
-        static Action<TCall, JobID> CreateJoblessAction(Action<TCall> func)
-        {
-            return delegate(TCall callback, JobID jobID)
-            {
-                func(callback);
-            };
         }
     }
 }

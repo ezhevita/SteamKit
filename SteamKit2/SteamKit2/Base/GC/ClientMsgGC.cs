@@ -17,9 +17,9 @@ namespace SteamKit2.GC
     /// <summary>
     /// Represents a protobuf backed game coordinator message.
     /// </summary>
-    /// <typeparam name="BodyType">The body type of this message.</typeparam>
-    public sealed class ClientGCMsgProtobuf<BodyType> : GCMsgBase<MsgGCHdrProtoBuf>
-        where BodyType : IExtensible, new()
+    /// <typeparam name="TBody">The body type of this message.</typeparam>
+    public sealed class ClientGCMsgProtobuf<TBody> : GCMsgBase<MsgGCHdrProtoBuf>
+        where TBody : IExtensible, new()
     {
         /// <summary>
         /// Gets a value indicating whether this gc message is protobuf backed.
@@ -69,7 +69,7 @@ namespace SteamKit2.GC
         /// <summary>
         /// Gets the body structure of this message.
         /// </summary>
-        public BodyType Body { get; private set; }
+        public TBody Body { get; private set; }
 
 
         /// <summary>
@@ -81,7 +81,7 @@ namespace SteamKit2.GC
         public ClientGCMsgProtobuf( uint eMsg, int payloadReserve = 64 )
             : base( payloadReserve )
         {
-            Body = new BodyType();
+            Body = new TBody();
 
             // set our emsg
             Header.Msg = eMsg;
@@ -97,10 +97,7 @@ namespace SteamKit2.GC
         public ClientGCMsgProtobuf( uint eMsg, GCMsgBase<MsgGCHdrProtoBuf> msg, int payloadReserve = 64 )
             : this( eMsg, payloadReserve )
         {
-            if ( msg == null )
-            {
-                throw new ArgumentNullException( nameof(msg) );
-            }
+            ArgumentNullException.ThrowIfNull( msg );
 
             // our target is where the message came from
             Header.Proto.job_id_target = msg.Header.Proto.job_id_source;
@@ -127,14 +124,12 @@ namespace SteamKit2.GC
         /// </returns>
         public override byte[] Serialize()
         {
-            using ( MemoryStream ms = new MemoryStream() )
-            {
-                Header.Serialize( ms );
-                Serializer.Serialize( ms, Body );
-                Payload.WriteTo( ms );
+            using MemoryStream ms = new MemoryStream();
+            Header.Serialize( ms );
+            Serializer.Serialize( ms, Body );
+            Payload.WriteTo( ms );
 
-                return ms.ToArray();
-            }
+            return ms.ToArray();
         }
         /// <summary>
         /// Initializes this gc message by deserializing the specified data.
@@ -142,31 +137,26 @@ namespace SteamKit2.GC
         /// <param name="data">The data representing a gc message.</param>
         public override void Deserialize( byte[] data )
         {
-            if ( data == null )
-            {
-                throw new ArgumentNullException( nameof(data) );
-            }
+            ArgumentNullException.ThrowIfNull( data );
 
-            using ( MemoryStream ms = new MemoryStream( data ) )
-            {
-                Header.Deserialize( ms );
-                Body = Serializer.Deserialize<BodyType>( ms );
+            using MemoryStream ms = new MemoryStream( data );
+            Header.Deserialize( ms );
+            Body = Serializer.Deserialize<TBody>( ms );
 
-                // the rest of the data is the payload
-                int payloadOffset = ( int )ms.Position;
-                int payloadLen = ( int )( ms.Length - ms.Position );
+            // the rest of the data is the payload
+            int payloadOffset = ( int )ms.Position;
+            int payloadLen = ( int )( ms.Length - ms.Position );
 
-                Payload.Write( data, payloadOffset, payloadLen );
-            }
+            Payload.Write( data, payloadOffset, payloadLen );
         }
     }
 
     /// <summary>
     /// Represents a struct backed game coordinator message.
     /// </summary>
-    /// <typeparam name="BodyType">The body type of this message.</typeparam>
-    public sealed class ClientGCMsg<BodyType> : GCMsgBase<MsgGCHdr>
-        where BodyType : IGCSerializableMessage, new()
+    /// <typeparam name="TBody">The body type of this message.</typeparam>
+    public sealed class ClientGCMsg<TBody> : GCMsgBase<MsgGCHdr>
+        where TBody : IGCSerializableMessage, new()
     {
         /// <summary>
         /// Gets a value indicating whether this gc message is protobuf backed.
@@ -194,7 +184,7 @@ namespace SteamKit2.GC
         public override JobID TargetJobID
         {
             get => Header.TargetJobID;
-            set => Header.TargetJobID = value = value ?? throw new ArgumentNullException( nameof(value) );
+            set => Header.TargetJobID = value ?? throw new ArgumentNullException( nameof(value) );
         }
         /// <summary>
         /// Gets or sets the source job id for this gc message.
@@ -212,7 +202,7 @@ namespace SteamKit2.GC
         /// <summary>
         /// Gets the body structure of this message.
         /// </summary>
-        public BodyType Body { get; }
+        public TBody Body { get; }
 
 
         /// <summary>
@@ -223,7 +213,7 @@ namespace SteamKit2.GC
         public ClientGCMsg( int payloadReserve = 64 )
             : base( payloadReserve )
         {
-            Body = new BodyType();
+            Body = new TBody();
 
             // assign our emsg
             msgType = Body.GetEMsg();
@@ -238,10 +228,7 @@ namespace SteamKit2.GC
         public ClientGCMsg( GCMsgBase<MsgGCHdr> msg, int payloadReserve = 64 )
             : this( payloadReserve )
         {
-            if ( msg == null )
-            {
-                throw new ArgumentNullException( nameof(msg) );
-            }
+            ArgumentNullException.ThrowIfNull( msg );
 
             // our target is where the message came from
             Header.TargetJobID = msg.Header.SourceJobID;
@@ -255,10 +242,7 @@ namespace SteamKit2.GC
         public ClientGCMsg( IPacketGCMsg msg )
             : this()
         {
-            if ( msg == null )
-            {
-                throw new ArgumentNullException( nameof(msg) );
-            }
+            ArgumentNullException.ThrowIfNull( msg );
 
             DebugLog.Assert( !msg.IsProto, "ClientGCMsg", "ClientGCMsg used for proto message!" );
 
@@ -273,14 +257,12 @@ namespace SteamKit2.GC
         /// </returns>
         public override byte[] Serialize()
         {
-            using ( MemoryStream ms = new MemoryStream() )
-            {
-                Header.Serialize( ms );
-                Body.Serialize( ms );
-                Payload.WriteTo( ms );
+            using MemoryStream ms = new MemoryStream();
+            Header.Serialize( ms );
+            Body.Serialize( ms );
+            Payload.WriteTo( ms );
 
-                return ms.ToArray();
-            }
+            return ms.ToArray();
         }
         /// <summary>
         /// Initializes this gc message by deserializing the specified data.
@@ -288,22 +270,17 @@ namespace SteamKit2.GC
         /// <param name="data">The data representing a client message.</param>
         public override void Deserialize( byte[] data )
         {
-            if ( data == null )
-            {
-                throw new ArgumentNullException( nameof(data) );
-            }
+            ArgumentNullException.ThrowIfNull( data );
 
-            using ( MemoryStream ms = new MemoryStream( data ) )
-            {
-                Header.Deserialize( ms );
-                Body.Deserialize( ms );
+            using MemoryStream ms = new MemoryStream( data );
+            Header.Deserialize( ms );
+            Body.Deserialize( ms );
 
-                // the rest of the data is the payload
-                int payloadOffset = ( int )ms.Position;
-                int payloadLen = ( int )( ms.Length - ms.Position );
+            // the rest of the data is the payload
+            int payloadOffset = ( int )ms.Position;
+            int payloadLen = ( int )( ms.Length - ms.Position );
 
-                Payload.Write( data, payloadOffset, payloadLen );
-            }
+            Payload.Write( data, payloadOffset, payloadLen );
         }
     }
 }

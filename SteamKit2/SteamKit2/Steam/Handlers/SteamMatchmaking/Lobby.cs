@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
-using System.Linq;
 using SteamKit2.Internal;
 
 namespace SteamKit2
@@ -172,7 +171,6 @@ namespace SteamKit2
                 /// <summary>
                 /// Initializes a new instance of the <see cref="SlotsAvailableFilter"/> class.
                 /// </summary>
-                /// <param name="key">The metadata key this filter pertains to.</param>
                 /// <param name="slotsAvailable">Integer value to compare against.</param>
                 public SlotsAvailableFilter( int slotsAvailable ) : base( ELobbyFilterType.SlotsAvailable, "", ELobbyComparison.Equal )
                 {
@@ -244,7 +242,7 @@ namespace SteamKit2
                 /// </summary>
                 public IReadOnlyDictionary<string, string> Metadata { get; }
 
-                internal Member( SteamID steamId, string personaName, IReadOnlyDictionary<string, string> metadata = null )
+                internal Member( SteamID steamId, string personaName, IReadOnlyDictionary<string, string>? metadata = null )
                 {
                     SteamID = steamId;
                     PersonaName = personaName;
@@ -256,7 +254,7 @@ namespace SteamKit2
                 /// </summary>
                 /// <param name="obj"></param>
                 /// <returns>true, if obj is <see cref="Member"/> with a matching SteamID. Otherwise, false.</returns>
-                public override bool Equals( object obj )
+                public override bool Equals( object? obj )
                 {
                     if ( obj is Member member )
                     {
@@ -297,7 +295,7 @@ namespace SteamKit2
             /// obtained/updated as a result of calling <see cref="SteamMatchmaking.GetLobbyList"/>
             /// may have a null (or non-null but state) owner.
             /// </summary>
-            public SteamID OwnerSteamID { get; }
+            public SteamID? OwnerSteamID { get; }
 
             /// <summary>
             /// The metadata of the lobby; string key-value pairs.
@@ -330,12 +328,12 @@ namespace SteamKit2
             public long? Weight { get; }
 
             static readonly ReadOnlyDictionary<string, string> EmptyMetadata =
-                new ReadOnlyDictionary<string, string>( new Dictionary<string, string>() );
+                new( new Dictionary<string, string>() );
 
             static readonly IReadOnlyList<Member> EmptyMembers = Array.AsReadOnly(Array.Empty<Member>());
 
-            internal Lobby( SteamID steamId, ELobbyType lobbyType, int lobbyFlags, SteamID ownerSteamId, IReadOnlyDictionary<string, string> metadata,
-                int maxMembers, int numMembers, IReadOnlyList<Member> members, float? distance, long? weight )
+            internal Lobby( SteamID steamId, ELobbyType lobbyType, int lobbyFlags, SteamID? ownerSteamId, IReadOnlyDictionary<string, string>? metadata,
+                int maxMembers, int numMembers, IReadOnlyList<Member>? members, float? distance, long? weight )
             {
                 SteamID = steamId;
                 LobbyType = lobbyType;
@@ -349,7 +347,7 @@ namespace SteamKit2
                 Weight = weight;
             }
 
-            internal static byte[] EncodeMetadata( IReadOnlyDictionary<string, string> metadata )
+            internal static byte[] EncodeMetadata( IReadOnlyDictionary<string, string>? metadata )
             {
                 var keyValue = new KeyValue( "" );
 
@@ -361,16 +359,14 @@ namespace SteamKit2
                     }
                 }
 
-                using ( var ms = new MemoryStream() )
-                {
-                    keyValue.SaveToStream( ms, true );
-                    return ms.ToArray();
-                }
+                using var ms = new MemoryStream();
+                keyValue.SaveToStream( ms, true );
+                return ms.ToArray();
             }
 
-            internal static ReadOnlyDictionary<string, string> DecodeMetadata( byte[] buffer )
+            internal static ReadOnlyDictionary<string, string> DecodeMetadata( byte[]? buffer )
             {
-                if ( buffer.Length == 0 )
+                if ( buffer == null || buffer.Length == 0 )
                 {
                     return EmptyMetadata;
                 }
@@ -389,6 +385,11 @@ namespace SteamKit2
 
                 foreach ( var value in keyValue.Children )
                 {
+                    if (value.Name is null || value.Value is null)
+                    {
+                        continue;
+                    }
+
                     metadata[ value.Name ] = value.Value;
                 }
 

@@ -5,7 +5,6 @@
 
 
 using System;
-using System.Net.Http;
 using SteamKit2.Discovery;
 
 namespace SteamKit2
@@ -51,6 +50,13 @@ namespace SteamKit2
         /// <param name="factoryFunction">A function to create and configure a new HttpClient.</param>
         /// <returns>A builder with modified configuration.</returns>
         ISteamConfigurationBuilder WithHttpClientFactory(HttpClientFactory factoryFunction);
+
+        /// <summary>
+        /// Configures this <see cref="SteamConfiguration" /> with custom machine information.
+        /// </summary>
+        /// <param name="machineInfoProvider">A custom machine information provider.</param>
+        /// <returns>A builder with modified configuration.</returns>
+        ISteamConfigurationBuilder WithMachineInfoProvider(IMachineInfoProvider machineInfoProvider);
 
         /// <summary>
         /// Configures how this <see cref="SteamConfiguration" /> will be used to connect to Steam.

@@ -7,8 +7,9 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 
 namespace SteamKit2
 {
@@ -54,7 +55,7 @@ namespace SteamKit2
         /// </value>
         public static bool Enabled { get; set; }
 
-        internal static List<IDebugListener> listeners = new List<IDebugListener>();
+        internal static List<IDebugListener> listeners = [];
 
 
         /// <summary>
@@ -75,11 +76,8 @@ namespace SteamKit2
         /// <param name="listener">The listener.</param>
         public static void AddListener( IDebugListener listener )
         {
-            if ( listener == null )
-            {
-                throw new ArgumentNullException( nameof(listener) );
-            }
-            
+            ArgumentNullException.ThrowIfNull( listener );
+
             listeners.Add( listener );
         }
         /// <summary>
@@ -143,7 +141,7 @@ namespace SteamKit2
         /// <param name="category">The category of the message.</param>
         /// <param name="msg">A composite format string.</param>
         /// <param name="args">An System.Object array containing zero or more objects to format.</param>
-        public static void WriteLine( string category, string msg, params object[] args )
+        public static void WriteLine( string category, string msg, params object?[]? args )
         {
             if ( !DebugLog.Enabled )
             {
@@ -175,7 +173,7 @@ namespace SteamKit2
         /// <param name="condition">The conditional expression to evaluate. If the condition is <c>true</c>, the specified message is not sent and the message box is not displayed.</param>
         /// <param name="category">The category of the message.</param>
         /// <param name="message">The message to display if the assertion fails.</param>
-        public static void Assert( bool condition, string category, string message )
+        public static void Assert( [DoesNotReturnIf(false)] bool condition, string category, string message )
         {
             // make use of .NET's assert facility first
             Debug.Assert( condition, string.Format( "{0}: {1}", category, message ) );

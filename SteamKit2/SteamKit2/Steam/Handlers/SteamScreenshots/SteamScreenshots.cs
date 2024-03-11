@@ -1,8 +1,6 @@
-﻿using SteamKit2.Internal;
-using System;
+﻿using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
+using SteamKit2.Internal;
 
 namespace SteamKit2
 {
@@ -25,24 +23,24 @@ namespace SteamKit2
             /// Gets or sets the Steam game ID this screenshot belongs to
             /// </summary>
             /// <value>The game ID.</value>
-            public GameID GameID { get; set; }
+            public GameID? GameID { get; set; }
 
             /// <summary>
             /// Gets or sets the UFS image filepath.
             /// </summary>
             /// <value>The UFS image filepath.</value>
-            public string UFSImageFilePath { get; set; }
+            public string? UFSImageFilePath { get; set; }
             /// <summary>
             /// Gets or sets the UFS thumbnail filepath.
             /// </summary>
             /// <value>The UFS thumbnail filepath.</value>
-            public string UFSThumbnailFilePath { get; set; }
+            public string? UFSThumbnailFilePath { get; set; }
 
             /// <summary>
             /// Gets or sets the screenshot caption
             /// </summary>
             /// <value>The screenshot caption.</value>
-            public string Caption { get; set; }
+            public string? Caption { get; set; }
             /// <summary>
             /// Gets or sets the screenshot privacy
             /// </summary>
@@ -101,10 +99,7 @@ namespace SteamKit2
         /// <returns>The Job ID of the request. This can be used to find the appropriate <see cref="ScreenshotAddedCallback"/>.</returns>
         public AsyncJob<ScreenshotAddedCallback> AddScreenshot( ScreenshotDetails details )
         {
-            if ( details == null )
-            {
-                throw new ArgumentNullException( nameof(details) );
-            }
+            ArgumentNullException.ThrowIfNull( details );
 
             var msg = new ClientMsgProtobuf<CMsgClientUCMAddScreenshot>( EMsg.ClientUCMAddScreenshot );
             msg.SourceJobID = Client.GetNextJobID();
@@ -134,14 +129,9 @@ namespace SteamKit2
         /// <param name="packetMsg">The packet message that contains the data.</param>
         public override void HandleMsg( IPacketMsg packetMsg )
         {
-            if ( packetMsg == null )
-            {
-                throw new ArgumentNullException( nameof(packetMsg) );
-            }
+            ArgumentNullException.ThrowIfNull( packetMsg );
 
-            bool haveFunc = dispatchMap.TryGetValue( packetMsg.MsgType, out var handlerFunc );
-
-            if ( !haveFunc )
+            if ( !dispatchMap.TryGetValue( packetMsg.MsgType, out var handlerFunc ) )
             {
                 // ignore messages that we don't have a handler function for
                 return;

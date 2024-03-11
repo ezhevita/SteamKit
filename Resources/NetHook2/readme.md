@@ -1,33 +1,45 @@
-NetHook2
----
+## NetHook2
 
 NetHook2 is a windows DLL that is injected into the address space of a running Steam.exe process in order to hook into the networking routines of the Steam client. After hooking, NetHook2 will proceed to dump any network messages sent to and received from the Steam server that the client is connected to.
 
 These messages are dumped to file, and can be analyzed further with NetHookAnalyzer, a hex editor, or your own purpose-built tools.
 
-Compiling
----
-
-#### Dependencies
-NetHook2 requires the following libraries to compile:
-* [zlib 1.2.8](http://zlib.net/zlib128.zip)
-* [Google protobuf 2.5.0](https://code.google.com/p/protobuf/downloads/detail?name=protobuf-2.5.0.zip&can=2&q=)
+## Compiling
 
 #### Building
-1. Execute `SetupDependencies.bat` to automatically acquire the zlib and protobuf headers and libraries. Alternatively, you can retrieve these dependencies yourself and tweak the include paths in Visual Studio.
-2. Build with VS 2015 (the v140 toolset is required to link with libprotobuf correctly).
+
+1. Run `.\SetupDependencies.ps1` in a PowerShell prompt or `powershell -File SetupDependencies.ps1` to set up dependencies.
+2. Build `NetHook2.sln` with Visual Studio 2022.
 3. Behold: a fresh new `NetHook2.dll` is born into this world. You can place this DLL wherever you like, or leave where you built it. You'll need its full file path later when injecting.
 
-Usage
----
-NetHook is capable of self injecting and ejecting from running instances of Steam, so there's no requirement to use a separate loader such as winject. 
+#### Updating steammessages_base
+
+1. Download `protoc` for the same version as specified in `NetHook2\vcpkg.json`.
+2. Run `.\protoc.exe .\steammessages_base.proto --cpp_out=build`
+
+## Usage
+
+NetHook is capable of self injecting and ejecting from running instances of Steam, so there's no requirement to use a separate loader such as winject.
+
+#### Downloading pre-built binary
+
+As SteamKit2 releases can lag behind Steam changes, the current master branch may contain fixes to NetHook that are not released yet.
+
+You can download latest available build from [GitHub Actions here](https://github.com/SteamRE/SteamKit/actions).  
+Click on the latest commit and scroll all the way down to Artifacts section.
+There, you can download NetHook and NetHookAnalyzer.
+
+#### Installing dependencies
+
+NetHook requires Microsoft Visual C++ Redistributable (x86) package for usage. There is a possibility that this dependency is already covered on your machine due to being installed by other software that you use, however, Windows doesn't come with it by default, so it's worthy to ensure that it's installed. For majority of use cases, installing latest `vc_redist` package from [here](https://aka.ms/vs/17/release/vc_redist.x86.exe) should be sufficient. If you're building NH2 manually with VS older than 2015, you may need a different version - read more about `vc_redist` on [MSDN](https://docs.microsoft.com/cpp/windows/latest-supported-vc-redist) page, which also has links for other versions. This step resolves common `rundll32` error of "the specified module could not be found".
 
 #### To begin dumping network packets
 
 1. Ensure Steam is running. Additionally, make sure you're prepared for the possibility for Steam to crash. Using NetHook2 isn't an exact science, and sometimes things break.
-2. Execute the following in an *elevated* command prompt: `rundll32 "<Path To NetHook2.dll>",Inject`
+2. Execute the following in an _elevated_ command prompt: `rundll32 "<Path To NetHook2.dll>",Inject`
 
 If all goes well, you should see a console window appear with output similar to the following:
+
 ```
 CCrypto::SymmetricEncryptWithIV = 0x384b84c0
 CCrypto::SymmetricDecrypt = 0x384b8290
@@ -54,3 +66,10 @@ Simply execute `rundll32 "<Path To NetHook2.dll>",Eject`. The console window wil
 NetHook2 supports injecting into any other process that makes use of Steam's networking library. In particular, you can inject NetHook2 into `steamcmd.exe`, and `srcds.exe` to dump traffic from those processes.
 
 To do so, simply provide the ID or the name of the process on the command line when injecting. Ex: `rundll32 "<Path To NetHook2.dll>",Inject 1234` or `rundll32 "<Path To NetHook2.dll>",Inject srcds.exe`. When ejecting, be sure to provide the same process ID or name in the command as well.
+
+#### Viewing the dumped packets
+
+Packet dumps are written to `nethook/<timestamp>` folder inside of your Steam installation.  
+`<timestamp>` indicates the time NetHook was injected.
+
+Open `NetHookAnalyzer2.exe` and then File->Open, it should automatically default to the latest folder created by NetHook.

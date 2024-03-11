@@ -6,7 +6,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using SteamKit2.Internal;
 
 namespace SteamKit2
@@ -16,16 +15,10 @@ namespace SteamKit2
     /// </summary>
     public sealed partial class SteamApps : ClientMsgHandler
     {
-
-        // Ambiguous reference in cref attribute: 'SteamApps.PICSGetProductInfo'. Assuming 'SteamKit2.SteamApps.PICSGetProductInfo(uint?, uint?, bool, bool)',
-        // but could have also matched other overloads including 'SteamKit2.SteamApps.PICSGetProductInfo(System.Collections.Generic.IEnumerable<SteamKit2.SteamApps.PICSRequest>, System.Collections.Generic.IEnumerable<SteamKit2.SteamApps.PICSRequest>, bool)'.
-#pragma warning disable 0419
-
         /// <summary>
-        /// Represents a PICS request used for <see cref="SteamApps.PICSGetProductInfo"/>
+        /// Represents a PICS request used for <see cref="o:SteamApps.PICSGetProductInfo"/>
         /// </summary>
-        public sealed class PICSRequest
-#pragma warning restore 0419
+        public struct PICSRequest
         {
             /// <summary>
             /// Gets or sets the ID of the app or package being requested
@@ -37,38 +30,16 @@ namespace SteamKit2
             /// </summary>
             /// <value>The access token</value>
             public ulong AccessToken { get; set; }
-            /// <summary>
-            /// Requests only public app info
-            /// </summary>
-            /// <value>The flag specifying if only public data is requested</value>
-            public bool Public { get; set; }
-
-            /// <summary>
-            /// Instantiate an empty PICS product info request
-            /// </summary>
-            public PICSRequest() : this( 0, 0, true )
-            {
-            }
-
-            /// <summary>
-            ///  Instantiate a PICS product info request for a given app or package id
-            /// </summary>
-            /// <param name="id">App or package ID</param>
-            public PICSRequest( uint id ) : this( id, 0, true )
-            {
-            }
 
             /// <summary>
             /// Instantiate a PICS product info request for a given app or package id and an access token
             /// </summary>
             /// <param name="id">App or package ID</param>
             /// <param name="access_token">PICS access token</param>
-            /// <param name="only_public">Get only public info</param>
-            public PICSRequest( uint id, ulong access_token, bool only_public )
+            public PICSRequest( uint id = 0, ulong access_token = 0 )
             {
                 ID = id;
                 AccessToken = access_token;
-                Public = only_public;
             }
         }
 
@@ -81,10 +52,13 @@ namespace SteamKit2
             {
                 { EMsg.ClientLicenseList, HandleLicenseList },
                 { EMsg.ClientRequestFreeLicenseResponse, HandleFreeLicense },
+                { EMsg.ClientPurchaseResponse, HandlePurchaseResponse },
+                { EMsg.ClientRedeemGuestPassResponse, HandleRedeemGuestPassResponse },
                 { EMsg.ClientGameConnectTokens, HandleGameConnectTokens },
                 { EMsg.ClientVACBanStatus, HandleVACBanStatus },
                 { EMsg.ClientGetAppOwnershipTicketResponse, HandleAppOwnershipTicketResponse },
                 { EMsg.ClientGetDepotDecryptionKeyResponse, HandleDepotKeyResponse },
+                { EMsg.ClientGetLegacyGameKeyResponse, HandleLegacyGameKeyResponse },
                 { EMsg.ClientPICSAccessTokenResponse, HandlePICSAccessTokenResponse },
                 { EMsg.ClientPICSChangesSinceResponse, HandlePICSChangesSinceResponse },
                 { EMsg.ClientPICSProductInfoResponse, HandlePICSProductInfoResponse },
@@ -120,9 +94,9 @@ namespace SteamKit2
         /// The returned <see cref="AsyncJob{T}"/> can also be awaited to retrieve the callback result.
         /// </summary>
         /// <param name="depotid">The DepotID to request a decryption key for.</param>
-        /// <param name="appid">The AppID to request the decryption key for.</param>
+        /// <param name="appid">The AppID parent of the DepotID.</param>
         /// <returns>The Job ID of the request. This can be used to find the appropriate <see cref="DepotKeyCallback"/>.</returns>
-        public AsyncJob<DepotKeyCallback> GetDepotDecryptionKey( uint depotid, uint appid = 0 )
+        public AsyncJob<DepotKeyCallback> GetDepotDecryptionKey( uint depotid, uint appid )
         {
             var request = new ClientMsgProtobuf<CMsgClientGetDepotDecryptionKey>( EMsg.ClientGetDepotDecryptionKey );
             request.SourceJobID = Client.GetNextJobID();
@@ -145,8 +119,8 @@ namespace SteamKit2
         /// <returns>The Job ID of the request. This can be used to find the appropriate <see cref="PICSTokensCallback"/>.</returns>
         public AsyncJob<PICSTokensCallback> PICSGetAccessTokens( uint? app, uint? package )
         {
-            List<uint> apps = new List<uint>();
-            List<uint> packages = new List<uint>();
+            List<uint> apps = [];
+            List<uint> packages = [];
 
             if ( app.HasValue ) apps.Add( app.Value );
             if ( package.HasValue ) packages.Add( package.Value );
@@ -203,35 +177,19 @@ namespace SteamKit2
         /// Results are returned in a <see cref="PICSProductInfoCallback"/> callback.
         /// The returned <see cref="AsyncJob{T}"/> can also be awaited to retrieve the callback result.
         /// </summary>
-        /// <param name="app">App id requested.</param>
-        /// <param name="package">Package id requested.</param>
-        /// <param name="onlyPublic">Whether to send only public information.</param>
+        /// <param name="app"><see cref="PICSRequest"/> request for an app.</param>
+        /// <param name="package"><see cref="PICSRequest"/> request for a package.</param>
         /// <param name="metaDataOnly">Whether to send only meta data.</param>
         /// <returns>The Job ID of the request. This can be used to find the appropriate <see cref="PICSProductInfoCallback"/>.</returns>
-        public AsyncJobMultiple<PICSProductInfoCallback> PICSGetProductInfo(uint? app, uint? package, bool onlyPublic = true, bool metaDataOnly = false)
+        public AsyncJobMultiple<PICSProductInfoCallback> PICSGetProductInfo( PICSRequest? app, PICSRequest? package, bool metaDataOnly = false )
         {
-            List<uint> apps = new List<uint>();
-            List<uint> packages = new List<uint>();
+            var apps = new List<PICSRequest>();
+            var packages = new List<PICSRequest>();
 
             if ( app.HasValue ) apps.Add( app.Value );
             if ( package.HasValue ) packages.Add( package.Value );
 
-            return PICSGetProductInfo( apps, packages, onlyPublic, metaDataOnly );
-        }
-
-        /// <summary>
-        /// Request product information for a list of apps or packages
-        /// Results are returned in a <see cref="PICSProductInfoCallback"/> callback.
-        /// The returned <see cref="AsyncJob{T}"/> can also be awaited to retrieve the callback result.
-        /// </summary>
-        /// <param name="apps">List of app ids requested.</param>
-        /// <param name="packages">List of package ids requested.</param>
-        /// <param name="onlyPublic">Whether to send only public information.</param>
-        /// <param name="metaDataOnly">Whether to send only meta data.</param>
-        /// <returns>The Job ID of the request. This can be used to find the appropriate <see cref="PICSProductInfoCallback"/>.</returns>
-        public AsyncJobMultiple<PICSProductInfoCallback> PICSGetProductInfo( IEnumerable<uint> apps, IEnumerable<uint> packages, bool onlyPublic = true, bool metaDataOnly = false )
-        {
-            return PICSGetProductInfo( apps.Select( app => new PICSRequest( app, 0, onlyPublic ) ), packages.Select( package => new PICSRequest( package ) ), metaDataOnly );
+            return PICSGetProductInfo( apps, packages, metaDataOnly );
         }
 
         /// <summary>
@@ -245,15 +203,9 @@ namespace SteamKit2
         /// <returns>The Job ID of the request. This can be used to find the appropriate <see cref="PICSProductInfoCallback"/>.</returns>
         public AsyncJobMultiple<PICSProductInfoCallback> PICSGetProductInfo( IEnumerable<PICSRequest> apps, IEnumerable<PICSRequest> packages, bool metaDataOnly = false )
         {
-            if ( apps == null )
-            {
-                throw new ArgumentNullException( nameof(apps) );
-            }
+            ArgumentNullException.ThrowIfNull( apps );
 
-            if ( packages == null )
-            {
-                throw new ArgumentNullException( nameof(packages) );
-            }
+            ArgumentNullException.ThrowIfNull( packages );
 
             var request = new ClientMsgProtobuf<CMsgClientPICSProductInfoRequest>( EMsg.ClientPICSProductInfoRequest );
             request.SourceJobID = Client.GetNextJobID();
@@ -263,7 +215,7 @@ namespace SteamKit2
                 var appinfo = new CMsgClientPICSProductInfoRequest.AppInfo();
                 appinfo.access_token = app_request.AccessToken;
                 appinfo.appid = app_request.ID;
-                appinfo.only_public = app_request.Public;
+                appinfo.only_public_obsolete = false;
 
                 request.Body.apps.Add( appinfo );
             }
@@ -328,10 +280,7 @@ namespace SteamKit2
         /// <returns>The Job ID of the request. This can be used to find the appropriate <see cref="FreeLicenseCallback"/>.</returns>
         public AsyncJob<FreeLicenseCallback> RequestFreeLicense( IEnumerable<uint> apps )
         {
-            if ( apps == null )
-            {
-                throw new ArgumentNullException( nameof(apps) );
-            }
+            ArgumentNullException.ThrowIfNull( apps );
 
             var request = new ClientMsgProtobuf<CMsgClientRequestFreeLicense>( EMsg.ClientRequestFreeLicense );
             request.SourceJobID = Client.GetNextJobID();
@@ -365,19 +314,29 @@ namespace SteamKit2
         }
 
         /// <summary>
+        /// Request the legacy CD game keys for the requested appid.
+        /// </summary>
+        /// <param name="appid">The AppID to request game keys for.</param>
+        public AsyncJob<LegacyGameKeyCallback> GetLegacyGameKey( uint appid )
+        {
+            var request = new ClientMsg<MsgClientGetLegacyGameKey>();
+            request.SourceJobID = Client.GetNextJobID();
+            request.Body.AppId = appid;
+
+            this.Client.Send( request );
+
+            return new AsyncJob<LegacyGameKeyCallback>( this.Client, request.SourceJobID );
+        }
+
+        /// <summary>
         /// Handles a client message. This should not be called directly.
         /// </summary>
         /// <param name="packetMsg">The packet message that contains the data.</param>
         public override void HandleMsg( IPacketMsg packetMsg )
         {
-            if ( packetMsg == null )
-            {
-                throw new ArgumentNullException( nameof(packetMsg) );
-            }
+            ArgumentNullException.ThrowIfNull( packetMsg );
 
-            bool haveFunc = dispatchMap.TryGetValue( packetMsg.MsgType, out var handlerFunc );
-
-            if ( !haveFunc )
+            if ( !dispatchMap.TryGetValue( packetMsg.MsgType, out var handlerFunc ) )
             {
                 // ignore messages that we don't have a handler function for
                 return;
@@ -385,7 +344,6 @@ namespace SteamKit2
 
             handlerFunc( packetMsg );
         }
-
 
         #region ClientMsg Handlers
         void HandleAppOwnershipTicketResponse( IPacketMsg packetMsg )
@@ -400,6 +358,13 @@ namespace SteamKit2
             var keyResponse = new ClientMsgProtobuf<CMsgClientGetDepotDecryptionKeyResponse>( packetMsg );
 
             var callback = new DepotKeyCallback(keyResponse.TargetJobID, keyResponse.Body);
+            this.Client.PostCallback( callback );
+        }
+        void HandleLegacyGameKeyResponse( IPacketMsg packetMsg )
+        {
+            var keyResponse = new ClientMsg<MsgClientGetLegacyGameKeyResponse>( packetMsg );
+
+            var callback = new LegacyGameKeyCallback( keyResponse.TargetJobID, keyResponse.Body, keyResponse.Payload.ToArray() );
             this.Client.PostCallback( callback );
         }
         void HandleGameConnectTokens( IPacketMsg packetMsg )
@@ -421,6 +386,20 @@ namespace SteamKit2
             var grantedLicenses = new ClientMsgProtobuf<CMsgClientRequestFreeLicenseResponse>( packetMsg );
 
             var callback = new FreeLicenseCallback( grantedLicenses.TargetJobID, grantedLicenses.Body );
+            this.Client.PostCallback( callback );
+        }
+        void HandlePurchaseResponse( IPacketMsg packetMsg )
+        {
+            var purchaseResponse = new ClientMsgProtobuf<CMsgClientPurchaseResponse>( packetMsg );
+
+            var callback = new PurchaseResponseCallback( purchaseResponse.TargetJobID, purchaseResponse.Body );
+            this.Client.PostCallback( callback );
+        }
+        void HandleRedeemGuestPassResponse( IPacketMsg packetMsg )
+        {
+            var redeemedGuestPass = new ClientMsgProtobuf<CMsgClientRedeemGuestPassResponse>( packetMsg );
+
+            var callback = new RedeemGuestPassResponseCallback( redeemedGuestPass.TargetJobID, redeemedGuestPass.Body );
             this.Client.PostCallback( callback );
         }
         void HandleVACBanStatus( IPacketMsg packetMsg )

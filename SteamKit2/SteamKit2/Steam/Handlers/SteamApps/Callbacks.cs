@@ -88,6 +88,23 @@ namespace SteamKit2
                 /// <value>The territory code.</value>
                 public int TerritoryCode { get; private set; }
 
+                /// <summary>
+                /// Gets the owner account id of the license.
+                /// </summary>
+                /// <value>The owned account id.</value>
+                public uint OwnerAccountID { get; private set; }
+
+                /// <summary>
+                /// Gets the PICS access token for this package.
+                /// </summary>
+                /// <value>The access token.</value>
+                public ulong AccessToken { get; private set; }
+
+                /// <summary>
+                /// Gets the master package id.
+                /// </summary>
+                /// <value>The master package id.</value>
+                public uint MasterPackageID { get; private set; }
 
                 internal License( CMsgClientLicenseList.License license )
                 {
@@ -109,6 +126,10 @@ namespace SteamKit2
                     this.LicenseType = ( ELicenseType )license.license_type;
 
                     this.TerritoryCode = license.territory_code;
+
+                    this.AccessToken = license.access_token;
+                    this.OwnerAccountID = license.owner_id;
+                    this.MasterPackageID = license.master_package_id;
                 }
             }
 
@@ -232,6 +253,38 @@ namespace SteamKit2
         }
 
         /// <summary>
+        /// This callback is received in response to calling <see cref="SteamApps.GetLegacyGameKey"/>.
+        /// </summary>
+        public sealed class LegacyGameKeyCallback : CallbackMsg
+        {
+            /// <summary>
+            /// Gets the result of requesting this game key.
+            /// </summary>
+            public EResult Result { get; private set; }
+            /// <summary>
+            /// Gets the appid that this game key is for.
+            /// </summary>
+            public uint AppID { get; private set; }
+            /// <summary>
+            /// Gets the game key.
+            /// </summary>
+            public string? Key { get; private set; }
+
+            internal LegacyGameKeyCallback( JobID jobID, MsgClientGetLegacyGameKeyResponse msg, byte[] payload )
+            {
+                JobID = jobID;
+                AppID = msg.AppId;
+                Result = msg.Result;
+
+                if ( msg.Length > 0 )
+                {
+                    var length = ( int )msg.Length - 1;
+                    Key = System.Text.Encoding.ASCII.GetString( payload, 0, length );
+                }
+            }
+        }
+
+        /// <summary>
         /// This callback is fired when the client receives a list of game connect tokens.
         /// </summary>
         public sealed class GameConnectTokensCallback : CallbackMsg
@@ -268,16 +321,14 @@ namespace SteamKit2
             {
                 var tempList = new List<uint>();
 
-                using ( var ms = new MemoryStream( payload ) )
-                using ( var br = new BinaryReader( ms ) )
+                using var ms = new MemoryStream( payload );
+                using var br = new BinaryReader( ms );
+                for ( int x = 0; x < msg.NumBans; x++ )
                 {
-                    for ( int x = 0 ; x < msg.NumBans ; x++ )
-                    {
-                        tempList.Add( br.ReadUInt32() );
-                    }
-
-                    BannedApps = new ReadOnlyCollection<uint>( tempList );
+                    tempList.Add( br.ReadUInt32() );
                 }
+
+                BannedApps = new ReadOnlyCollection<uint>( tempList );
             }
         }
 
@@ -310,17 +361,17 @@ namespace SteamKit2
 
                 PackageTokensDenied = new ReadOnlyCollection<uint>( msg.package_denied_tokens );
                 AppTokensDenied = new ReadOnlyCollection<uint>( msg.app_denied_tokens );
-                PackageTokens = new Dictionary<uint, ulong>();
-                AppTokens = new Dictionary<uint, ulong>();
+                PackageTokens = [];
+                AppTokens = [];
 
                 foreach ( var package_token in msg.package_access_tokens )
                 {
-                    PackageTokens.Add( package_token.packageid, package_token.access_token );
+                    PackageTokens[ package_token.packageid ] = package_token.access_token;
                 }
 
                 foreach ( var app_token in msg.app_access_tokens )
                 {
-                    AppTokens.Add( app_token.appid, app_token.access_token );
+                    AppTokens[ app_token.appid ] = app_token.access_token;
                 }
             }
         }
@@ -376,6 +427,14 @@ namespace SteamKit2
             /// </summary>
             public bool RequiresFullUpdate { get; private set; }
             /// <summary>
+            /// If this update requires a full update of the app information
+            /// </summary>
+            public bool RequiresFullAppUpdate { get; private set; }
+            /// <summary>
+            /// If this update requires a full update of the package information
+            /// </summary>
+            public bool RequiresFullPackageUpdate { get; private set; }
+            /// <summary>
             /// Dictionary containing requested package tokens
             /// </summary>
             public Dictionary<uint, PICSChangeData> PackageChanges { get; private set; }
@@ -392,17 +451,19 @@ namespace SteamKit2
                 LastChangeNumber = msg.since_change_number;
                 CurrentChangeNumber = msg.current_change_number;
                 RequiresFullUpdate = msg.force_full_update;
-                PackageChanges = new Dictionary<uint, PICSChangeData>();
-                AppChanges = new Dictionary<uint, PICSChangeData>();
+                RequiresFullAppUpdate = msg.force_full_app_update;
+                RequiresFullPackageUpdate = msg.force_full_package_update;
+                PackageChanges = [];
+                AppChanges = [];
 
                 foreach ( var package_change in msg.package_changes )
                 {
-                    PackageChanges.Add( package_change.packageid, new PICSChangeData( package_change ) );
+                    PackageChanges[ package_change.packageid ] = new PICSChangeData( package_change );
                 }
 
                 foreach ( var app_change in msg.app_changes )
                 {
-                    AppChanges.Add( app_change.appid, new PICSChangeData( app_change ) );
+                    AppChanges[ app_change.appid ] = new PICSChangeData( app_change );
                 }
             }
         }
@@ -432,7 +493,7 @@ namespace SteamKit2
                 /// <summary>
                 /// Gets the hash of the content
                 /// </summary>
-                public byte[] SHAHash { get; private set; }
+                public byte[]? SHAHash { get; private set; }
                 /// <summary>
                 /// Gets the KeyValue info
                 /// </summary>
@@ -448,9 +509,9 @@ namespace SteamKit2
                 /// <summary>
                 /// For an app metadata-only request, returns the Uri for HTTP appinfo requests.
                 /// </summary>
-                public Uri HttpUri { get; private set; }
+                public Uri? HttpUri { get; private set; }
 
-                internal PICSProductInfo( CMsgClientPICSProductInfoResponse parentResponse, CMsgClientPICSProductInfoResponse.AppInfo app_info)
+                internal PICSProductInfo( CMsgClientPICSProductInfoResponse parentResponse, CMsgClientPICSProductInfoResponse.AppInfo app_info )
                 {
                     this.ID = app_info.appid;
                     this.ChangeNumber = app_info.change_number;
@@ -462,22 +523,20 @@ namespace SteamKit2
                     if ( app_info.buffer != null && app_info.buffer.Length > 0 )
                     {
                         // we don't want to read the trailing null byte
-                        using ( var ms = new MemoryStream( app_info.buffer, 0, app_info.buffer.Length - 1 ) )
-                        {
-                            this.KeyValues.ReadAsText( ms );
-                        }
+                        using var ms = new MemoryStream( app_info.buffer, 0, app_info.buffer.Length - 1 );
+                        this.KeyValues.ReadAsText( ms );
                     }
 
                     this.OnlyPublic = app_info.only_public;
 
                     // We should have all these fields set for the response to a metadata-only request, but guard here just in case.
-                    if (this.SHAHash != null && this.SHAHash.Length > 0 && !string.IsNullOrEmpty(parentResponse.http_host))
+                    if ( this.SHAHash != null && this.SHAHash.Length > 0 && !string.IsNullOrEmpty( parentResponse.http_host ) )
                     {
-                        var shaString = BitConverter.ToString(this.SHAHash)
-                            .Replace("-", string.Empty)
+                        var shaString = BitConverter.ToString( this.SHAHash )
+                            .Replace( "-", string.Empty )
                             .ToLower();
-                        var uriString = string.Format("http://{0}/appinfo/{1}/sha/{2}.txt.gz", parentResponse.http_host, this.ID, shaString);
-                        this.HttpUri = new Uri(uriString);
+                        var uriString = string.Format( "http://{0}/appinfo/{1}/sha/{2}.txt.gz", parentResponse.http_host, this.ID, shaString );
+                        this.HttpUri = new Uri( uriString );
                     }
 
                     this.UseHttp = this.HttpUri != null && app_info.size >= parentResponse.http_min_size;
@@ -494,16 +553,14 @@ namespace SteamKit2
 
                     if ( package_info.buffer != null )
                     {
-                        using ( MemoryStream ms = new MemoryStream( package_info.buffer ) )
-                        using ( var br = new BinaryReader( ms ) )
-                        {
-                            // steamclient checks this value == 1 before it attempts to read the KV from the buffer
-                            // see: CPackageInfo::UpdateFromBuffer(CSHA const&,uint,CUtlBuffer &)
-                            // todo: we've apparently ignored this with zero ill effects, but perhaps we want to respect it?
-                            br.ReadUInt32();
-                            
-                            this.KeyValues.TryReadAsBinary( ms );
-                        }
+                        using MemoryStream ms = new MemoryStream( package_info.buffer );
+                        using var br = new BinaryReader( ms );
+                        // steamclient checks this value == 1 before it attempts to read the KV from the buffer
+                        // see: CPackageInfo::UpdateFromBuffer(CSHA const&,uint,CUtlBuffer &)
+                        // todo: we've apparently ignored this with zero ill effects, but perhaps we want to respect it?
+                        br.ReadUInt32();
+
+                        this.KeyValues.TryReadAsBinary( ms );
                     }
                 }
             }
@@ -542,17 +599,17 @@ namespace SteamKit2
                 ResponsePending = msg.response_pending;
                 UnknownPackages = new ReadOnlyCollection<uint>( msg.unknown_packageids );
                 UnknownApps = new ReadOnlyCollection<uint>( msg.unknown_appids );
-                Packages = new Dictionary<uint, PICSProductInfo>();
-                Apps = new Dictionary<uint, PICSProductInfo>();
+                Packages = [];
+                Apps = [];
 
                 foreach ( var package_info in msg.packages )
                 {
-                    Packages.Add( package_info.packageid, new PICSProductInfo( package_info ) );
+                    Packages[ package_info.packageid ] = new PICSProductInfo( package_info );
                 }
 
                 foreach ( var app_info in msg.apps )
                 {
-                    Apps.Add( app_info.appid, new PICSProductInfo( msg, app_info ) );
+                    Apps[ app_info.appid ] = new PICSProductInfo( msg, app_info );
                 }
             }
         }
@@ -586,13 +643,77 @@ namespace SteamKit2
                 CountGuestPassesToGive = msg.CountGuestPassesToGive;
                 CountGuestPassesToRedeem = msg.CountGuestPassesToRedeem;
 
-                GuestPasses = new List<KeyValue>();
+                GuestPasses = [];
                 for ( int i = 0; i < CountGuestPassesToGive + CountGuestPassesToRedeem; i++ )
                 {
                     var kv = new KeyValue();
                     kv.TryReadAsBinary( payload );
                     GuestPasses.Add( kv );
                 }
+            }
+        }
+
+        /// <summary>
+        /// This callback is received in response to activating a guest pass or a gift.
+        /// </summary>
+        public sealed class RedeemGuestPassResponseCallback : CallbackMsg
+        {
+            /// <summary>
+            /// Result of the operation
+            /// </summary>
+            public EResult Result { get; set; }
+            /// <summary>
+            /// Package ID which was activated.
+            /// </summary>
+            public uint PackageID { get; set; }
+            /// <summary>
+            /// App ID which must be owned to activate this guest pass.
+            /// </summary>
+            public uint MustOwnAppID { get; set; }
+
+
+            internal RedeemGuestPassResponseCallback( JobID jobID, CMsgClientRedeemGuestPassResponse msg )
+            {
+                JobID = jobID;
+                Result = ( EResult )msg.eresult;
+                PackageID = msg.package_id;
+                MustOwnAppID = msg.must_own_appid;
+            }
+        }
+
+        /// <summary>
+        /// This callback is received in a response to activating a Steam key.
+        /// </summary>
+        public sealed class PurchaseResponseCallback : CallbackMsg
+        {
+            /// <summary>
+            /// Result of the operation
+            /// </summary>
+            public EResult Result { get; set; }
+            /// <summary>
+            /// Purchase result of the operation
+            /// </summary>
+            public EPurchaseResultDetail PurchaseResultDetail { get; set; }
+            /// <summary>
+            /// Purchase receipt of the operation
+            /// </summary>
+            public KeyValue PurchaseReceiptInfo { get; set; }
+
+
+            internal PurchaseResponseCallback( JobID jobID, CMsgClientPurchaseResponse msg )
+            {
+                JobID = jobID;
+                Result = ( EResult )msg.eresult;
+                PurchaseResultDetail = ( EPurchaseResultDetail )msg.purchase_result_details;
+                PurchaseReceiptInfo = new KeyValue();
+
+                if ( msg.purchase_receipt_info == null )
+                {
+                    return;
+                }
+
+                using var ms = new MemoryStream( msg.purchase_receipt_info );
+                PurchaseReceiptInfo.TryReadAsBinary( ms );
             }
         }
 
@@ -643,11 +764,11 @@ namespace SteamKit2
                 JobID = jobID;
 
                 Result = ( EResult )msg.eresult;
-                BetaPasswords = new Dictionary<string, byte[]>();
+                BetaPasswords = [];
 
                 foreach ( var password in msg.betapasswords )
                 {
-                    BetaPasswords.Add( password.betaname, Utils.DecodeHexString( password.betapassword ) );
+                    BetaPasswords[ password.betaname ] = Utils.DecodeHexString( password.betapassword );
                 }
             }
         }

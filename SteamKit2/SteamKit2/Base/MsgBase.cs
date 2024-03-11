@@ -43,7 +43,7 @@ namespace SteamKit2
         /// <value>
         /// The <see cref="SteamID"/>.
         /// </value>
-        SteamID SteamID { get; set; }
+        SteamID? SteamID { get; set; }
 
         /// <summary>
         /// Gets or sets the target job id for this client message.
@@ -65,11 +65,6 @@ namespace SteamKit2
         /// </summary>
         /// <returns>Data representing a client message.</returns>
         byte[] Serialize();
-        /// <summary>
-        /// Initializes this client message by deserializing the specified data.
-        /// </summary>
-        /// <param name="data">The data representing a client message.</param>
-        void Deserialize( byte[] data );
     }
 
     /// <summary>
@@ -221,10 +216,7 @@ namespace SteamKit2
                 return;
             }
 
-            if ( encoding == null )
-            {
-                throw new ArgumentNullException( nameof(encoding) );
-            }
+            ArgumentNullException.ThrowIfNull( encoding );
 
             Write( encoding.GetBytes( data ) );
         }
@@ -425,10 +417,7 @@ namespace SteamKit2
         /// /// <returns>The string.</returns>
         public string ReadNullTermString( Encoding encoding )
         {
-            if ( encoding == null )
-            {
-                throw new ArgumentNullException( nameof(encoding) );
-            }
+            ArgumentNullException.ThrowIfNull( encoding );
 
             return Payload.ReadNullTermString( encoding );
         }
@@ -439,9 +428,9 @@ namespace SteamKit2
     /// This is the abstract base class for all available client messages.
     /// It's used to maintain packet payloads and provide a header for all client messages.
     /// </summary>
-    /// <typeparam name="HdrType">The header type for this client message.</typeparam>
-    public abstract class MsgBase<HdrType> : MsgBase, IClientMsg
-        where HdrType : ISteamSerializableHeader, new()
+    /// <typeparam name="THeader">The header type for this client message.</typeparam>
+    public abstract class MsgBase<THeader> : MsgBase, IClientMsg
+        where THeader : ISteamSerializableHeader, new()
     {
         /// <summary>
         /// Gets a value indicating whether this client message is protobuf backed.
@@ -471,7 +460,7 @@ namespace SteamKit2
         /// <value>
         /// The <see cref="SteamID"/>.
         /// </value>
-        public abstract SteamID SteamID { get; set; }
+        public abstract SteamID? SteamID { get; set; }
 
         /// <summary>
         /// Gets or sets the target job id for this client message.
@@ -492,7 +481,7 @@ namespace SteamKit2
         /// <summary>
         /// Gets the header for this message type. 
         /// </summary>
-        public HdrType Header { get; }
+        public THeader Header { get; internal set; }
 
 
         /// <summary>
@@ -502,7 +491,7 @@ namespace SteamKit2
         public MsgBase( int payloadReserve = 0 )
             : base( payloadReserve )
         {
-            Header = new HdrType();
+            Header = new THeader();
         }
 
 
@@ -513,11 +502,5 @@ namespace SteamKit2
         /// Data representing a client message.
         /// </returns>
         public abstract byte[] Serialize();
-        /// <summary>
-        /// Initializes this client message by deserializing the specified data.
-        /// </summary>
-        /// <param name="data">The data representing a client message.</param>
-        public abstract void Deserialize( byte[] data );
-
     }
 }

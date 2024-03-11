@@ -6,10 +6,9 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.Linq;
 using System.Runtime.CompilerServices;
-using System.Text;
 using System.Threading.Tasks;
+using SteamKit2.Util;
 
 namespace SteamKit2
 {
@@ -21,7 +20,7 @@ namespace SteamKit2
         /// <summary>
         /// Represents an invalid JobID.
         /// </summary>
-        public static readonly JobID Invalid = new JobID();
+        public static readonly JobID Invalid = new();
 
 
         /// <summary>
@@ -42,7 +41,7 @@ namespace SteamKit2
 
 
         /// <summary>
-        /// Performs an implicit conversion from <see cref="SteamKit2.JobID"/> to <see cref="System.UInt64"/>.
+        /// Performs an implicit conversion from <see cref="SteamKit2.JobID"/> to <see cref="ulong"/>.
         /// </summary>
         /// <param name="jobId">The Job ID.</param>
         /// <returns>
@@ -50,16 +49,13 @@ namespace SteamKit2
         /// </returns>
         public static implicit operator ulong ( JobID jobId )
         {
-            if ( jobId == null )
-            {
-                throw new ArgumentNullException( nameof(jobId) );
-            }
+            ArgumentNullException.ThrowIfNull( jobId );
 
             return jobId.Value;
         }
 
         /// <summary>
-        /// Performs an implicit conversion from <see cref="System.UInt64"/> to <see cref="SteamKit2.JobID"/>.
+        /// Performs an implicit conversion from <see cref="ulong"/> to <see cref="SteamKit2.JobID"/>.
         /// </summary>
         /// <param name="jobId">The Job ID.</param>
         /// <returns>
@@ -79,10 +75,7 @@ namespace SteamKit2
         /// </returns>
         public static implicit operator JobID( AsyncJob asyncJob )
         {
-            if ( asyncJob == null )
-            {
-                throw new ArgumentNullException( nameof(asyncJob) );
-            }
+            ArgumentNullException.ThrowIfNull( asyncJob );
 
             return asyncJob.JobID;
         }
@@ -94,7 +87,7 @@ namespace SteamKit2
     /// </summary>
     public abstract class AsyncJob
     {
-        DateTime jobStart;
+        ValueStopwatch jobStart;
 
 
         /// <summary>
@@ -109,28 +102,28 @@ namespace SteamKit2
 
         internal bool IsTimedout
         {
-            get { return DateTime.UtcNow >= jobStart + Timeout; }
+            get { return jobStart.GetElapsedTime() >= Timeout; }
         }
 
 
         internal AsyncJob( SteamClient client, JobID jobId )
         {
-            if ( client == null )
-            {
-                throw new ArgumentNullException( nameof(client) );
-            }
-            
-            if ( jobId == null )
-            {
-                throw new ArgumentNullException( nameof(jobId) );
-            }
+            ArgumentNullException.ThrowIfNull( client );
 
-            jobStart = DateTime.UtcNow;
+            ArgumentNullException.ThrowIfNull( jobId );
+
+            jobStart = ValueStopwatch.StartNew();
             JobID = jobId;
-
-            client.StartJob( this );
         }
 
+        /// <summary>
+        /// Constructors are required to register this AsyncJob with the JobManager once initialized.
+        /// </summary>
+        /// <param name="client"></param>
+        internal void RegisterJob( SteamClient client )
+        {
+            client.StartJob( this );
+        }
 
         /// <summary>
         /// Adds a callback to the async job's result set.
@@ -178,6 +171,8 @@ namespace SteamKit2
             : base( client, jobId )
         {
             tcs = new TaskCompletionSource<T>( TaskCreationOptions.RunContinuationsAsynchronously );
+
+            RegisterJob( client );
         }
 
 
@@ -206,10 +201,7 @@ namespace SteamKit2
         /// <returns>Always <c>true</c>.</returns>
         internal override bool AddResult( CallbackMsg callback )
         {
-            if ( callback == null )
-            {
-                throw new ArgumentNullException( nameof( callback ) );
-            }
+            ArgumentNullException.ThrowIfNull( callback );
 
             // we're complete with just this callback
             tcs.TrySetResult( (T)callback );
@@ -268,14 +260,14 @@ namespace SteamKit2
             /// <summary>
             /// Gets a read only collection of callback results for this async job.
             /// </summary>
-            public ReadOnlyCollection<T> Results { get; internal set; }
+            public ReadOnlyCollection<T>? Results { get; internal set; }
         }
 
 
         TaskCompletionSource<ResultSet> tcs;
         Predicate<T> finishCondition;
 
-        List<T> results = new List<T>();
+        List<T> results = [];
 
 
         /// <summary>
@@ -290,6 +282,8 @@ namespace SteamKit2
             tcs = new TaskCompletionSource<ResultSet>( TaskCreationOptions.RunContinuationsAsynchronously );
 
             this.finishCondition = finishCondition;
+
+            RegisterJob( client );
         }
 
 
@@ -318,10 +312,7 @@ namespace SteamKit2
         /// <returns><c>true</c> if this result completes the set; otherwise, <c>false</c>.</returns>
         internal override bool AddResult( CallbackMsg callback )
         {
-            if ( callback == null )
-            {
-                throw new ArgumentNullException( nameof( callback ) );
-            }
+            ArgumentNullException.ThrowIfNull( callback );
 
             T callbackMsg = (T)callback;
 

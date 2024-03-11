@@ -7,20 +7,19 @@ using SteamKit2.Internal;
 
 namespace NetHookAnalyzer2
 {
-	class NetHookItem
+	partial class NetHookItem
 	{
-		public enum PacketDirection 
+		public enum PacketDirection
 		{
 			In,
 			Out
 		}
 
 		static Regex NameRegex = new Regex(
-			@"(?<num>\d+)_(?<direction>in|out)_(?<emsg>\d+)_k_EMsg(?<name>[\w_<>]+)",
+			@"(?<num>\d+)_(?<direction>in|out)_(?<emsg>\d+)",
 			RegexOptions.Compiled | RegexOptions.IgnoreCase
 		);
 
-		public string Name { get; private set; }
 		public int Sequence { get; private set; }
 		public DateTime Timestamp { get; private set; }
 		public PacketDirection Direction { get; private set; }
@@ -28,7 +27,7 @@ namespace NetHookAnalyzer2
 
 		public string InnerMessageName
 		{
-			get { return innerMessageName ?? (innerMessageName = ReadInnerMessageName()); }
+			get { return innerMessageName ??= ReadInnerMessageName(); }
 		}
 		string innerMessageName;
 
@@ -38,7 +37,7 @@ namespace NetHookAnalyzer2
 		{
 			return FileInfo.OpenRead();
 		}
-		
+
 		public bool LoadFromFile(FileInfo fileInfo)
 		{
 			Match m = NameRegex.Match( fileInfo.Name );
@@ -48,8 +47,7 @@ namespace NetHookAnalyzer2
 				return false;
 			}
 
-			int sequence;
-			if (!int.TryParse(m.Groups["num"].Value, out sequence))
+			if (!int.TryParse(m.Groups["num"].Value, out var sequence))
 			{
 				return false;
 			}
@@ -57,14 +55,13 @@ namespace NetHookAnalyzer2
 			Timestamp = fileInfo.LastWriteTime;
 
 			var direction = m.Groups[ "direction" ].Value;
-			PacketDirection packetDirection;
-			if (!Enum.TryParse<PacketDirection>(direction, ignoreCase: true, result: out packetDirection))
+
+			if (!Enum.TryParse<PacketDirection>(direction, ignoreCase: true, result: out var packetDirection))
 			{
 				return false;
 			}
 
-			uint emsg;
-			if (!uint.TryParse(m.Groups["emsg"].Value, out emsg))
+			if (!uint.TryParse(m.Groups["emsg"].Value, out var emsg))
 			{
 				return false;
 			}
@@ -74,7 +71,6 @@ namespace NetHookAnalyzer2
 			Sequence = sequence;
 			Direction = packetDirection;
 			EMsg = (EMsg)emsg;
-			Name = m.Groups["name"].Value;
 
 			return true;
 		}
@@ -112,28 +108,26 @@ namespace NetHookAnalyzer2
 				}
 
 				case SteamKit2.EMsg.ServiceMethod:
+				case SteamKit2.EMsg.ServiceMethodSendToClient:
 				case SteamKit2.EMsg.ServiceMethodCallFromClient:
+				case SteamKit2.EMsg.ServiceMethodCallFromClientNonAuthed:
 				case SteamKit2.EMsg.ServiceMethodResponse:
 				{
-					var fileData = File.ReadAllBytes(FileInfo.FullName);
+					using var stream = OpenStream();
 					var hdr = new MsgHdrProtoBuf();
-					using (var ms = new MemoryStream(fileData))
-					{
-						hdr.Deserialize(ms);
-					}
-
+					hdr.Deserialize(stream);
 					return hdr.Proto.target_job_name;
 				}
 
-				case SteamKit2.EMsg.ClientServiceMethod:
+				case SteamKit2.EMsg.ClientServiceMethodLegacy:
 				{
-					var proto = ReadAsProtobufMsg<CMsgClientServiceMethod>();
+					var proto = ReadAsProtobufMsg<CMsgClientServiceMethodLegacy>();
 					return proto.Body.method_name;
 				}
 
-				case SteamKit2.EMsg.ClientServiceMethodResponse:
+				case SteamKit2.EMsg.ClientServiceMethodLegacyResponse:
 				{
-					var proto = ReadAsProtobufMsg<CMsgClientServiceMethodResponse>();
+					var proto = ReadAsProtobufMsg<CMsgClientServiceMethodLegacyResponse>();
 					return proto.Body.method_name;
 				}
 

@@ -5,6 +5,7 @@
 
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using SteamKit2.Internal;
 
@@ -15,7 +16,9 @@ namespace SteamKit2
         public const uint MAX_PAYLOAD = 0x4DC;
 
         public UdpHeader Header { get; private set; }
-        public MemoryStream Payload { get; private set; }
+
+        [DisallowNull, NotNull]
+        public MemoryStream? Payload { get; private set; }
 
         /// <summary>
         /// Gets a value indicating whether this instance is valid.
@@ -50,13 +53,17 @@ namespace SteamKit2
             }
             catch ( Exception )
             {
+                Payload = new MemoryStream();
                 return;
             }
 
             if ( this.Header.Magic != UdpHeader.MAGIC )
+            {
+                Payload = new MemoryStream();
                 return;
+            }
 
-            SetPayload(ms, Header.PayloadSize);
+            Payload = GetPayloadAndUpdateHeader( ms, Header.PayloadSize, Header );
         }
 
         /// <summary>
@@ -119,15 +126,21 @@ namespace SteamKit2
         /// <param name="length">The length.</param>
         public void SetPayload(MemoryStream ms, long length)
         {
+            Payload = GetPayloadAndUpdateHeader( ms, length, Header );
+        }
+
+        static MemoryStream GetPayloadAndUpdateHeader(MemoryStream ms, long length, UdpHeader header)
+        {
             if ( length > MAX_PAYLOAD )
-                throw new ArgumentException("Payload length exceeds 0x4DC maximum");
+                throw new ArgumentException( "Payload length exceeds 0x4DC maximum" );
 
-            byte[] buf = new byte[length];
-            ms.Read(buf, 0, buf.Length);
+            byte[] buf = new byte[ length ];
+            ms.ReadAll( buf );
 
-            Payload = new MemoryStream(buf);
-            Header.PayloadSize = (ushort) Payload.Length;
-            Header.MsgSize = (uint) Payload.Length;
+            var payload = new MemoryStream( buf );
+            header.PayloadSize = ( ushort )payload.Length;
+            header.MsgSize = ( uint )payload.Length;
+            return payload;
         }
 
         /// <summary>
@@ -136,15 +149,13 @@ namespace SteamKit2
         /// <returns>The serialized packet.</returns>
         public byte[] GetData()
         {
-            using ( MemoryStream ms = new MemoryStream() )
-            {
-                Header.Serialize( ms );
+            using MemoryStream ms = new MemoryStream();
+            Header.Serialize( ms );
 
-                Payload.Seek( 0, SeekOrigin.Begin );
-                Payload.WriteTo( ms );
+            Payload.Seek( 0, SeekOrigin.Begin );
+            Payload.WriteTo( ms );
 
-                return ms.ToArray();
-            }
+            return ms.ToArray();
         }
 
     }

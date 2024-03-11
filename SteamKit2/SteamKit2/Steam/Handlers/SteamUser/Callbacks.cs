@@ -5,14 +5,13 @@
 
 
 using System;
-using System.Net;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
-using System.Collections.Generic;
+using System.Net;
 using System.Text;
 using ProtoBuf;
 using SteamKit2.Internal;
-using SteamKit2.Unified.Internal;
 
 namespace SteamKit2
 {
@@ -47,7 +46,7 @@ namespace SteamKit2
             /// <summary>
             /// Gets or sets the public IP of the client
             /// </summary>
-            public IPAddress PublicIP { get; private set; }
+            public IPAddress? PublicIP { get; private set; }
 
             /// <summary>
             /// Gets the Steam3 server time.
@@ -62,12 +61,12 @@ namespace SteamKit2
             /// <summary>
             /// Gets the client steam ID.
             /// </summary>
-            public SteamID ClientSteamID { get; private set; }
+            public SteamID? ClientSteamID { get; private set; }
 
             /// <summary>
             /// Gets the email domain.
             /// </summary>
-            public string EmailDomain { get; private set; }
+            public string? EmailDomain { get; private set; }
 
             /// <summary>
             /// Gets the Steam2 CellID.
@@ -84,27 +83,17 @@ namespace SteamKit2
             /// This is used for authenticated content downloads in Steam2.
             /// This field will only be set when <see cref="LogOnDetails.RequestSteam2Ticket"/> has been set to <c>true</c>.
             /// </summary>
-            public byte[] Steam2Ticket { get; private set; }
-
-            /// <summary>
-            /// Gets a value indicating whether the client should use PICS.
-            /// </summary>
-            public bool UsePICS { get; private set; }
-
-            /// <summary>
-            /// Gets the WebAPI authentication user nonce.
-            /// </summary>
-            public string WebAPIUserNonce { get; private set; }
+            public byte[]? Steam2Ticket { get; private set; }
 
             /// <summary>
             /// Gets the IP country code.
             /// </summary>
-            public string IPCountryCode { get; private set; }
+            public string? IPCountryCode { get; private set; }
 
             /// <summary>
             /// Gets the vanity URL.
             /// </summary>
-            public string VanityURL { get; private set; }
+            public string? VanityURL { get; private set; }
 
             /// <summary>
             /// Gets the threshold for login failures before Steam wants the client to migrate to a new CM.
@@ -118,17 +107,17 @@ namespace SteamKit2
             /// <summary>
             /// Gets the Steam parental settings.
             /// </summary>
-            public ParentalSettings ParentalSettings { get; private set; }
+            public ParentalSettings? ParentalSettings { get; private set; }
 
             internal LoggedOnCallback( CMsgClientLogonResponse resp )
             {
                 this.Result = ( EResult )resp.eresult;
                 this.ExtendedResult = ( EResult )resp.eresult_extended;
 
-                this.OutOfGameSecsPerHeartbeat = resp.out_of_game_heartbeat_seconds;
-                this.InGameSecsPerHeartbeat = resp.in_game_heartbeat_seconds;
+                this.OutOfGameSecsPerHeartbeat = resp.legacy_out_of_game_heartbeat_seconds;
+                this.InGameSecsPerHeartbeat = resp.heartbeat_seconds;
 
-                this.PublicIP = NetHelpers.GetIPAddress( resp.public_ip );
+                this.PublicIP = resp.public_ip?.GetIPAddress();
 
                 this.ServerTime = DateUtils.DateTimeFromUnixTime( resp.rtime32_server_time );
 
@@ -145,10 +134,6 @@ namespace SteamKit2
 
                 this.IPCountryCode = resp.ip_country_code;
 
-                this.WebAPIUserNonce = resp.webapi_authenticate_user_nonce;
-
-                this.UsePICS = resp.use_pics;
-
                 this.VanityURL = resp.vanity_url;
 
                 this.NumLoginFailuresToMigrate = resp.count_loginfailures_to_migrate;
@@ -156,10 +141,8 @@ namespace SteamKit2
 
                 if ( resp.parental_settings != null )
                 {
-                    using ( var ms = new MemoryStream( resp.parental_settings ) )
-                    {
-                        this.ParentalSettings = Serializer.Deserialize<ParentalSettings>( ms );
-                    }
+                    using var ms = new MemoryStream( resp.parental_settings );
+                    this.ParentalSettings = Serializer.Deserialize<ParentalSettings>( ms );
                 }
             }
 
@@ -200,30 +183,6 @@ namespace SteamKit2
             internal LoggedOffCallback( EResult result )
             {
                 this.Result = result;
-            }
-        }
-
-        /// <summary>
-        /// This callback is returned some time after logging onto the network.
-        /// </summary>
-        public sealed class LoginKeyCallback : CallbackMsg
-        {
-            /// <summary>
-            /// Gets the login key.
-            /// </summary>
-            /// <value>The login key.</value>
-            public string LoginKey { get; private set; }
-            /// <summary>
-            /// Gets the unique ID.
-            /// </summary>
-            /// <value>The unique ID.</value>
-            public uint UniqueID { get; private set; }
-
-
-            internal LoginKeyCallback( CMsgClientNewLoginKey logKey )
-            {
-                this.LoginKey = logKey.login_key;
-                this.UniqueID = logKey.unique_id;
             }
         }
 
@@ -276,7 +235,7 @@ namespace SteamKit2
             /// <summary>
             /// Gets the facebook name if this account is linked with facebook.
             /// </summary>
-            public string FacebookName { get; private set ;}
+            public string FacebookName { get; private set; }
 
 
             internal AccountInfoCallback( CMsgClientAccountInfo msg )
@@ -290,6 +249,27 @@ namespace SteamKit2
 
                 FacebookID = msg.facebook_id;
                 FacebookName = msg.facebook_name;
+            }
+        }
+
+        /// <summary>
+        /// This callback is received when email information is recieved from the network.
+        /// </summary>
+        public sealed class EmailAddrInfoCallback : CallbackMsg
+        {
+            /// <summary>
+            /// Gets the email address of this account.
+            /// </summary>
+            public string EmailAddress { get; private set; }
+            /// <summary>
+            /// Gets a value indicating validated email or not.
+            /// </summary>
+            public bool IsValidated { get; private set; }
+
+            internal EmailAddrInfoCallback( CMsgClientEmailAddrInfo msg )
+            {
+                EmailAddress = msg.email_address;
+                IsValidated = msg.email_is_validated;
             }
         }
 
@@ -317,10 +297,19 @@ namespace SteamKit2
             public int Balance { get; private set; }
 
             /// <summary>
+            /// Gets the delayed (pending) balance of the wallet as a 32-bit integer, in cents.
+            /// </summary>
+            public int BalanceDelayed { get; private set; }
+
+            /// <summary>
             /// Gets the balance of the wallet as a 64-bit integer, in cents.
             /// </summary>
             public long LongBalance { get; private set; }
 
+            /// <summary>
+            /// Gets the delayed (pending) balance of the wallet as a 64-bit integer, in cents.
+            /// </summary>
+            public long LongBalanceDelayed { get; private set; }
 
             internal WalletInfoCallback( CMsgClientWalletInfoUpdate wallet )
             {
@@ -328,96 +317,9 @@ namespace SteamKit2
 
                 Currency = ( ECurrencyCode )wallet.currency;
                 Balance = wallet.balance;
+                BalanceDelayed = wallet.balance_delayed;
                 LongBalance = wallet.balance64;
-            }
-        }
-
-        /// <summary>
-        /// This callback is received when the backend wants the client to update it's local machine authentication data.
-        /// </summary>
-        public sealed class UpdateMachineAuthCallback : CallbackMsg
-        {
-            /// <summary>
-            /// Represents various one-time-password details.
-            /// </summary>
-            public sealed class OTPDetails
-            {
-                /// <summary>
-                /// Gets the OTP type.
-                /// </summary>
-                public uint Type { get; internal set; }
-                /// <summary>
-                /// Gets the OTP identifier.
-                /// </summary>
-                public string Identifier { get; internal set; }
-                /// <summary>
-                /// Gets the OTP shared secret.
-                /// </summary>
-                public byte[] SharedSecret { get; internal set; }
-                /// <summary>
-                /// Gets the OTP time drift.
-                /// </summary>
-                public uint TimeDrift { get; internal set; }
-
-
-                /// <summary>
-                /// Implicitly converts <see cref="UpdateMachineAuthCallback.OTPDetails"/> into <see cref="MachineAuthDetails.OTPDetails"/>.
-                /// </summary>
-                /// <param name="otp">The details to convert.</param>
-                /// <returns></returns>
-                public static implicit operator MachineAuthDetails.OTPDetails( OTPDetails otp )
-                {
-                    return new MachineAuthDetails.OTPDetails
-                    {
-                        Identifier = otp.Identifier,
-                        Type = otp.Type,
-                    };
-                }
-            }
-
-            /// <summary>
-            /// Gets the sentry file data that should be written.
-            /// </summary>
-            public byte[] Data { get; private set; }
-
-            /// <summary>
-            /// Gets the number of bytes to write.
-            /// </summary>
-            public int BytesToWrite { get; private set; }
-            /// <summary>
-            /// Gets the offset to write to.
-            /// </summary>
-            public int Offset { get; private set; }
-
-            /// <summary>
-            /// Gets the name of the sentry file to write.
-            /// </summary>
-            public string FileName { get; private set; }
-
-            /// <summary>
-            /// Gets the one-time-password details.
-            /// </summary>
-            public OTPDetails OneTimePassword { get; private set; }
-
-
-            internal UpdateMachineAuthCallback( JobID jobID, CMsgClientUpdateMachineAuth msg )
-            {
-                JobID = jobID;
-
-                Data = msg.bytes;
-
-                BytesToWrite = ( int )msg.cubtowrite;
-                Offset = ( int )msg.offset;
-
-                FileName = msg.filename;
-
-                OneTimePassword = new OTPDetails
-                {
-                    Type = msg.otp_type,
-                    Identifier = msg.otp_identifier,
-                    SharedSecret = msg.otp_sharedsecret,
-                    TimeDrift = msg.otp_timedrift,
-                };
+                LongBalanceDelayed = wallet.balance64_delayed;
             }
         }
 
@@ -443,6 +345,24 @@ namespace SteamKit2
 
                 this.Result = ( EResult )body.eresult;
                 this.Nonce = body.webapi_authenticate_user_nonce;
+            }
+        }
+
+        /// <summary>
+        /// This callback is received when users' vanity url changes.
+        /// </summary>
+        public sealed class VanityURLChangedCallback : CallbackMsg
+        {
+            /// <summary>
+            /// Gets the new vanity url.
+            /// </summary>
+            public string VanityURL { get; private set; }
+
+
+            internal VanityURLChangedCallback( JobID jobID, CMsgClientVanityURLChangedNotification body )
+            {
+                this.JobID = jobID;
+                this.VanityURL = body.vanity_url;
             }
         }
 
@@ -474,13 +394,11 @@ namespace SteamKit2
 
                 internal Message( byte[] data )
                 {
-                    using ( var ms = new MemoryStream( data ) )
-                    using ( var br = new BinaryReader( ms ) )
-                    {
-                        ID = br.ReadUInt64();
-                        URL = br.BaseStream.ReadNullTermString( Encoding.UTF8 );
-                        Flags = ( EMarketingMessageFlags )br.ReadUInt32();
-                    }
+                    using var ms = new MemoryStream( data );
+                    using var br = new BinaryReader( ms );
+                    ID = br.ReadUInt64();
+                    URL = br.BaseStream.ReadNullTermString( Encoding.UTF8 );
+                    Flags = ( EMarketingMessageFlags )br.ReadUInt32();
                 }
             }
 
@@ -505,7 +423,7 @@ namespace SteamKit2
                 using ( var ms = new MemoryStream( payload ) )
                 using ( var br = new BinaryReader( ms ) )
                 {
-                    for ( int x = 0 ; x < body.Count ; ++x )
+                    for ( int x = 0; x < body.Count; ++x )
                     {
                         int dataLen = br.ReadInt32() - 4; // total length includes the 4 byte length
                         byte[] messageData = br.ReadBytes( dataLen );
@@ -515,6 +433,29 @@ namespace SteamKit2
                 }
 
                 Messages = new ReadOnlyCollection<Message>( msgList );
+            }
+        }
+
+        /// <summary>
+        /// This callback is received when another client starts or stops playing a game.
+        /// While blocked, sending ClientGamesPlayed message will log you off with LoggedInElsewhere result.
+        /// </summary>
+        public sealed class PlayingSessionStateCallback : CallbackMsg
+        {
+            /// <summary>
+            /// Indicates whether playing is currently blocked by another client.
+            /// </summary>
+            public bool PlayingBlocked { get; private set; }
+            /// <summary>
+            /// When blocked, gets the appid which is currently being played.
+            /// </summary>
+            public uint PlayingAppID { get; private set; }
+
+            internal PlayingSessionStateCallback( JobID jobID, CMsgClientPlayingSessionState msg )
+            {
+                JobID = jobID;
+                PlayingBlocked = msg.playing_blocked;
+                PlayingAppID = msg.playing_app;
             }
         }
     }

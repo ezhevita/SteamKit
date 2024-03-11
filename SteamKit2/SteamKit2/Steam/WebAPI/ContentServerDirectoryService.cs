@@ -4,7 +4,7 @@ using System.Globalization;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
-using SteamKit2.Discovery;
+using SteamKit2.Internal;
 
 namespace SteamKit2
 {
@@ -17,8 +17,8 @@ namespace SteamKit2
         /// Load a list of servers from the Content Server Directory Service.
         /// </summary>
         /// <param name="configuration">Configuration Object</param>
-        /// <returns>A <see cref="System.Threading.Tasks.Task"/> with the Result set to an enumerable list of <see cref="CDNClient.Server"/>s.</returns>
-        public static Task<IReadOnlyCollection<CDNClient.Server>> LoadAsync( SteamConfiguration configuration )
+        /// <returns>A <see cref="System.Threading.Tasks.Task"/> with the Result set to an enumerable list of <see cref="CDN.Server"/>s.</returns>
+        public static Task<IReadOnlyCollection<CDN.Server>> LoadAsync( SteamConfiguration configuration )
             => LoadCoreAsync( configuration, null, null, CancellationToken.None );
 
         /// <summary>
@@ -26,8 +26,8 @@ namespace SteamKit2
         /// </summary>
         /// <param name="configuration">Configuration Object</param>
         /// <param name="cancellationToken">Cancellation Token</param>
-        /// <returns>A <see cref="System.Threading.Tasks.Task"/> with the Result set to an enumerable list of <see cref="CDNClient.Server"/>s.</returns>
-        public static Task<IReadOnlyCollection<CDNClient.Server>> LoadAsync( SteamConfiguration configuration, CancellationToken cancellationToken )
+        /// <returns>A <see cref="System.Threading.Tasks.Task"/> with the Result set to an enumerable list of <see cref="CDN.Server"/>s.</returns>
+        public static Task<IReadOnlyCollection<CDN.Server>> LoadAsync( SteamConfiguration configuration, CancellationToken cancellationToken )
             => LoadCoreAsync( configuration, null, null, cancellationToken );
 
         /// <summary>
@@ -36,30 +36,28 @@ namespace SteamKit2
         /// <param name="configuration">Configuration Object</param>
         /// <param name="cellId">Preferred steam cell id</param>
         /// <param name="cancellationToken">Cancellation Token</param>
-        /// <returns>A <see cref="System.Threading.Tasks.Task"/> with the Result set to an enumerable list of <see cref="CDNClient.Server"/>s.</returns>
-        public static Task<IReadOnlyCollection<CDNClient.Server>> LoadAsync( SteamConfiguration configuration, int cellId, CancellationToken cancellationToken )
+        /// <returns>A <see cref="System.Threading.Tasks.Task"/> with the Result set to an enumerable list of <see cref="CDN.Server"/>s.</returns>
+        public static Task<IReadOnlyCollection<CDN.Server>> LoadAsync( SteamConfiguration configuration, int cellId, CancellationToken cancellationToken )
             => LoadCoreAsync( configuration, cellId, null, cancellationToken );
 
         /// <summary>
         /// Load a list of servers from the Content Server Directory Service.
+        /// You can use <see cref="SteamContent.GetServersForSteamPipe"></see> instead to go over a CM connection.
         /// </summary>
         /// <param name="configuration">Configuration Object</param>
         /// <param name="cellId">Preferred steam cell id</param>
         /// <param name="maxNumServers">Max number of servers to return.</param>
         /// <param name="cancellationToken">Cancellation Token</param>
-        /// <returns>A <see cref="System.Threading.Tasks.Task"/> with the Result set to an enumerable list of <see cref="CDNClient.Server"/>s.</returns>
-        public static Task<IReadOnlyCollection<CDNClient.Server>> LoadAsync( SteamConfiguration configuration, int cellId, int maxNumServers, CancellationToken cancellationToken )
+        /// <returns>A <see cref="System.Threading.Tasks.Task"/> with the Result set to an enumerable list of <see cref="CDN.Server"/>s.</returns>
+        public static Task<IReadOnlyCollection<CDN.Server>> LoadAsync( SteamConfiguration configuration, int cellId, int maxNumServers, CancellationToken cancellationToken )
             => LoadCoreAsync( configuration, cellId, maxNumServers, cancellationToken );
 
-        static async Task<IReadOnlyCollection<CDNClient.Server>> LoadCoreAsync( SteamConfiguration configuration, int? cellId, int? maxNumServers, CancellationToken cancellationToken )
+        static async Task<IReadOnlyCollection<CDN.Server>> LoadCoreAsync( SteamConfiguration configuration, int? cellId, int? maxNumServers, CancellationToken cancellationToken )
         {
-            if ( configuration == null )
-            {
-                throw new ArgumentNullException( nameof( configuration ) );
-            }
+            ArgumentNullException.ThrowIfNull( configuration );
 
-            var directory = configuration.GetAsyncWebAPIInterface( "IContentServerDirectoryService" );
-            var args = new Dictionary<string, object>();
+            using var directory = configuration.GetAsyncWebAPIInterface( "IContentServerDirectoryService" );
+            var args = new Dictionary<string, object?>();
 
             if ( cellId.HasValue )
             {
@@ -77,40 +75,49 @@ namespace SteamKit2
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            var response = await directory.CallAsync( HttpMethod.Get, "GetServersForSteamPipe", version: 1, args: args ).ConfigureAwait( false );
-
-            var result = ( EResult )response[ "result" ].AsInteger( ( int )EResult.OK );
-            if ( result != EResult.OK || response["servers"] == KeyValue.Invalid )
-            {
-                throw new InvalidOperationException( string.Format( "Steam Web API returned EResult.{0}", result ) );
-            }
-
-            var serverList = response[ "servers" ];
+            var response = await directory.CallProtobufAsync<CContentServerDirectory_GetServersForSteamPipe_Response>(
+                HttpMethod.Get,
+                nameof( IContentServerDirectory.GetServersForSteamPipe ),
+                version: 1,
+                args: args
+            ).ConfigureAwait( false );
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            var serverRecords = new List<CDNClient.Server>( capacity: serverList.Children.Count );
+            return ConvertServerList( response );
+        }
 
-            foreach ( var child in serverList.Children )
+        internal static IReadOnlyCollection<CDN.Server> ConvertServerList( CContentServerDirectory_GetServersForSteamPipe_Response response )
+        {
+            var serverRecords = new List<CDN.Server>( capacity: response.servers.Count );
+
+            foreach ( var child in response.servers )
             {
-                string httpsSupport = child[ "https_support" ].AsString();
-                var protocol = ( httpsSupport == "optional" || httpsSupport == "mandatory" ) ? CDNClient.Server.ConnectionProtocol.HTTPS : CDNClient.Server.ConnectionProtocol.HTTP;
+                var httpsSupport = child.https_support;
+                var protocol = httpsSupport == "mandatory" ? CDN.Server.ConnectionProtocol.HTTPS : CDN.Server.ConnectionProtocol.HTTP;
 
-                serverRecords.Add( new CDNClient.Server
+                serverRecords.Add( new CDN.Server
                 {
                     Protocol = protocol,
-                    Host = child[ "host" ].AsString(),
-                    VHost = child[ "vhost" ].AsString(),
-                    Port = protocol == CDNClient.Server.ConnectionProtocol.HTTPS ? 443 : 80,
+                    Host = child.host,
+                    VHost = child.vhost,
+                    Port = protocol == CDN.Server.ConnectionProtocol.HTTPS ? 443 : 80,
 
-                    Type = child[ "type" ].AsString(),
-                    SourceID = child[ "source_id"].AsInteger(),
-                    CellID = (uint)child[ "cell" ].AsInteger(),
+                    Type = child.type,
+                    SourceID = child.source_id,
+                    CellID = ( uint )child.cell_id,
 
-                    Load = child[ "load" ].AsInteger(),
-                    WeightedLoad = child[ "weighted_load" ].AsInteger(),
-                    NumEntries = child[ "num_entries_in_client_list" ].AsInteger( 1 )
-                } 
+                    Load = child.load,
+                    WeightedLoad = child.weighted_load,
+                    NumEntries = child.num_entries_in_client_list,
+                    PreferredServer = child.preferred_server,
+                    SteamChinaOnly = child.steam_china_only,
+
+                    UseAsProxy = child.use_as_proxy,
+                    ProxyRequestPathTemplate = child.proxy_request_path_template,
+
+                    AllowedAppIds = child.allowed_app_ids.ToArray(),
+                }
                 );
             }
 

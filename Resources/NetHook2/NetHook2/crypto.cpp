@@ -2,124 +2,73 @@
 
 #include "logger.h"
 #include "csimplescan.h"
+#include "steamclient.h"
 
 #include <cstddef>
 
-#include <map>
 #include <Psapi.h>
+#include <assert.h>
 
+#undef GetMessage
 
+SymmetricEncryptChosenIVFn Encrypt_Orig = nullptr;
+PchMsgNameFromEMsgFn PchMsgNameFromEMsg = nullptr;
 
-SymmetricEncryptChosenIVFn Encrypt_Orig = 0;
-bool (__cdecl *GetMessageFn)( int * ) = 0;
-
-struct MsgInfo_t
-{
-	EMsg eMsg;
-	const char *pchMsgName;
-	int nFlags;
-	EServerType k_EServerTarget;
-	uint32 nUnk1;
-};
-
-static_assert(sizeof(MsgInfo_t) == 20, "Wrong size of MsgInfo_t");
+#ifdef X64BITS
+static_assert(sizeof(void*) == 8, "Unexpected pointer size on 64-bit");
+static_assert(sizeof(MsgInfo_t) == 24, "Wrong size of MsgInfo_t on 64-bit");
+#else
+static_assert(sizeof(void*) == 4, "Unexpected pointer size on 32-bit");
+static_assert(sizeof(MsgInfo_t) == 20, "Wrong size of MsgInfo_t on 32-bit");
+#endif
 static_assert(offsetof(MsgInfo_t, eMsg) == 0, "Wrong offset of MsgInfo_t::eMsg");
-static_assert(offsetof(MsgInfo_t, pchMsgName) == 4, "Wrong offset of MsgInfo_t::pchMsgName");
-static_assert(offsetof(MsgInfo_t, nFlags) == 8, "Wrong offset of MsgInfo_t::nFlags");
-static_assert(offsetof(MsgInfo_t, k_EServerTarget) == 12, "Wrong offset of MsgInfo_t::k_EServerTarget");
-static_assert(offsetof(MsgInfo_t, nUnk1) == 16, "Wrong offset of MsgInfo_t::uUnk1");
+static_assert(offsetof(MsgInfo_t, nFlags) == 4, "Wrong offset of MsgInfo_t::nFlags");
+static_assert(offsetof(MsgInfo_t, k_EServerTarget) == 8, "Wrong offset of MsgInfo_t::k_EServerTarget");
+static_assert(offsetof(MsgInfo_t, nUnk1) == 12, "Wrong offset of MsgInfo_t::uUnk1");
+static_assert(offsetof(MsgInfo_t, pchMsgName) == 16, "Wrong offset of MsgInfo_t::pchMsgName");
 
-typedef std::map<EMsg, MsgInfo_t *> MsgList;
 typedef std::pair<EMsg, MsgInfo_t *> MsgPair;
 
-MsgList eMsgList;
-
-
-
-CCrypto::CCrypto()
-	: Encrypt_Detour( NULL )
+CCrypto::CCrypto() noexcept
+	: Encrypt_Detour( nullptr )
 {
-	CSimpleScan steamClientScan( "steamclient.dll" );
+	CSimpleScan steamClientScan( STEAMCLIENT_DLL );
 
 
-	SymmetricEncryptChosenIVFn pEncrypt = NULL;
-	bool bEncrypt = steamClientScan.FindFunction(
+	SymmetricEncryptChosenIVFn pEncrypt = nullptr;
+	const bool bEncrypt = steamClientScan.FindFunction(
+#ifdef X64BITS
+		"\x48\x83\xEC\x58\x8B\x84\x24\xCC\xCC\xCC\xCC\xC6\x44\x24",
+		"xxxxxxx????xxx",
+#else
 		"\x55\x8B\xEC\x6A\x01\xFF\x75\x24",
 		"xxxxxxxx",
+#endif
 		(void **)&pEncrypt
 	);
 
 	Encrypt_Orig = pEncrypt;
 
-	g_pLogger->LogConsole( "CCrypto::SymmetricEncryptChosenIV = 0x%x\n", Encrypt_Orig );
+	g_pLogger->LogConsole( "CCrypto::SymmetricEncryptChosenIV = 0x%p\n", Encrypt_Orig );
 
-	char *pGetMessageList = NULL;
-	bool bGetMessageList = steamClientScan.FindFunction(
-		"\xA1\x00\x00\x00\x00\xA8\x01\x75\x29\x68\x00\x00\x00\x00\x83\xC8\x01\xB9\x00\x00\x00\x00\x68\x00\x00\x00\x00\xA3\x00\x00\x00\x00\xE8\x00\x00\x00\x00\x68\x00\x00\x00\x00\xE8\x00\x00\x00\x00\x83\xC4\x04\xB8\x00\x00\x00\x00\xC3",
-		"x????xxxxx????xxxx????x????x????x????x????x????xxxx????x",
-		(void **)&pGetMessageList
+	const bool bPchMsgNameFromEMsg = steamClientScan.FindFunction(
+#ifdef X64BITS
+		"\x48\x89\x5C\x24\xCC\x57\x48\x83\xEC\x20\x8B\xD9\xE8",
+		"xxxx?xxxxxxxx",
+#else
+		"\x55\x8B\xEC\x51\x56\xE8\x00\x00\x00\x00\x8B\x00\x00\x00\x00\x00\x8B\xF0",
+		"xxxxxx????x?????xx",
+#endif
+		(void**)&PchMsgNameFromEMsg
 	);
 
-	if (bGetMessageList)
+	if (bPchMsgNameFromEMsg)
 	{
-		const uint32 uMessageListStartPtrOffset = 23;
-		const uint32 uMessageListCountPtrOffset = 10;
-
-		MsgInfo_t *pInfos = *(MsgInfo_t **)( pGetMessageList + uMessageListStartPtrOffset );
-		const uint32 uNumMessages = *(uint32 *)( pGetMessageList + uMessageListCountPtrOffset );
-
-		g_pLogger->LogConsole( "pGetMessageList = 0x%x\npInfos = 0x%x\nnumMessages = %d\n", pGetMessageList, pInfos, uNumMessages );
-		
-		HMODULE sc = GetModuleHandle("steamclient.dll");
-		MODULEINFO modInfo;
-		GetModuleInformation(GetCurrentProcess(), sc, &modInfo, sizeof(modInfo));
-
-		uintptr_t uSteamAddrMin = (uintptr_t)modInfo.lpBaseOfDll;
-		uintptr_t uSteamAddrMax = (uintptr_t)modInfo.lpBaseOfDll + modInfo.SizeOfImage;
-
-		for ( uint16 x = 0 ; x < uNumMessages; x++ )
-		{
-			uintptr_t uMsgNameAddr = (uintptr_t)pInfos->pchMsgName;
-			if (uMsgNameAddr < uSteamAddrMin || uMsgNameAddr >= uSteamAddrMax)
-			{
-				g_pLogger->LogConsole("Found bad emsg name. Check size and layout of MsgInfo_t. Aborting emsg lookup.\n");
-				break;
-			}
-			eMsgList.insert( MsgPair( pInfos->eMsg, pInfos ) );
-
-			pInfos++;
-		}
-
-		if ( eMsgList.size() != 0 )
-		{
-			// should only delete our existing files if we have something new to dump
-			g_pLogger->DeleteFile( "emsg_list.txt", false );
-			g_pLogger->DeleteFile( "emsg_list_detailed.txt", false );
-
-			HANDLE hListFile = g_pLogger->OpenFile( "emsg_list.txt", false );
-			HANDLE hListDetailedFile = g_pLogger->OpenFile( "emsg_list_detailed.txt", false );
-
-			for ( MsgList::iterator iter = eMsgList.begin() ; iter != eMsgList.end() ; iter++ )
-			{
-				MsgInfo_t *pInfo = iter->second;
-
-				g_pLogger->LogOpenFile( hListFile, "\t%s = %d,\r\n", pInfo->pchMsgName, pInfo->eMsg );
-				g_pLogger->LogOpenFile( hListDetailedFile, "\t%s = %d, // flags: %d, server type: %d\r\n", pInfo->pchMsgName, pInfo->eMsg, pInfo->nFlags, pInfo->k_EServerTarget );
-			}
-
-			g_pLogger->CloseFile( hListFile );
-			g_pLogger->CloseFile( hListDetailedFile );
-
-			g_pLogger->LogConsole( "Dumped emsg list! (%d messages)\n", eMsgList.size() );
-		}
-		else
-		{
-			g_pLogger->LogConsole( "Unable to dump emsg list: No messages! (Offset changed?)\n" );
-		} 
+		g_pLogger->LogConsole( "PchMsgNameFromEMsg = 0x%p\n", PchMsgNameFromEMsg);
 	}
 	else
 	{
-		g_pLogger->LogConsole( "Unable to find GetMessageList.\n" );
+		g_pLogger->LogConsole( "Unable to find PchMsgNameFromEMsg.\n" );
 	}
 
 	SymmetricEncryptChosenIVFn encrypt = CCrypto::SymmetricEncryptChosenIV;
@@ -139,9 +88,6 @@ CCrypto::CCrypto()
 
 CCrypto::~CCrypto()
 {
-
-	eMsgList.clear();
-
 	if ( Encrypt_Detour )
 	{
 		Encrypt_Detour->Detach();
@@ -153,7 +99,7 @@ CCrypto::~CCrypto()
 
 bool __cdecl CCrypto::SymmetricEncryptChosenIV( const uint8 *pubPlaintextData, uint32 cubPlaintextData, const uint8 *pIV, uint32 cubIV, uint8 *pubEncryptedData, uint32 *pcubEncryptedData, const uint8 *pubKey, uint32 cubKey )
 {
-	g_pLogger->LogNetMessage( k_eNetOutgoing, pubPlaintextData, cubPlaintextData );
+	g_pLogger->LogNetMessage( ENetDirection::k_eNetOutgoing, pubPlaintextData, cubPlaintextData );
 
 	return (*Encrypt_Orig)( pubPlaintextData, cubPlaintextData, pIV, cubIV, pubEncryptedData, pcubEncryptedData, pubKey, cubKey );
 }
@@ -162,13 +108,10 @@ bool __cdecl CCrypto::SymmetricEncryptChosenIV( const uint8 *pubPlaintextData, u
 
 const char* CCrypto::GetMessage( EMsg eMsg, uint8 serverType )
 {
-	for ( MsgList::iterator iter = eMsgList.begin() ; iter != eMsgList.end() ; iter++ )
+	if(PchMsgNameFromEMsg != nullptr)
 	{
-		if ( iter->first == eMsg )
-		{
-			return iter->second->pchMsgName;
-		}
+		return PchMsgNameFromEMsg(eMsg);
 	}
 
-	return NULL;
+	return nullptr;
 }

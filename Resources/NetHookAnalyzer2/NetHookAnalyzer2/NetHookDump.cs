@@ -1,20 +1,21 @@
-﻿using System;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using SteamKit2.Internal;
 
 namespace NetHookAnalyzer2
 {
-	class NetHookDump
+	internal class NetHookDump
 	{
 		public NetHookDump()
 		{
 			items = new List<NetHookItem>();
+			readOnlyView = items.AsReadOnly();
 		}
 
 		List<NetHookItem> items;
+		IReadOnlyList<NetHookItem> readOnlyView;
+		static Dictionary<int, byte[]> accountAuthSecrets = new();
 
 		public void LoadFromDirectory(string directory)
 		{
@@ -24,22 +25,16 @@ namespace NetHookAnalyzer2
 			var itemFiles = directoryInfo.EnumerateFiles("*.bin", SearchOption.TopDirectoryOnly);
 			foreach (var itemFile in itemFiles)
 			{
-				var item = new NetHookItem();
-				if (item.LoadFromFile(itemFile))
-				{
-					items.Add(item);
-				}
+				AddItemFromFile(itemFile);
 			}
 		}
 
-		public IQueryable<NetHookItem> Items
-		{
-			get { return items.AsQueryable(); }
-		}
+		public IEnumerable<NetHookItem> Items => readOnlyView;
 
-		public NetHookItem AddItemFromPath(string path)
+		public static byte[] GetAccountAuthSecret(int secretId) => accountAuthSecrets.GetValueOrDefault(secretId);
+
+		public NetHookItem AddItemFromFile(FileInfo fileInfo)
 		{
-			var fileInfo = new FileInfo(path);
 			var item = new NetHookItem();
 			if (!item.LoadFromFile(fileInfo))
 			{
@@ -47,6 +42,17 @@ namespace NetHookAnalyzer2
 			}
 
 			items.Add(item);
+
+			if (item.EMsg == SteamKit2.EMsg.ServiceMethodResponse && item.InnerMessageName == "Credentials.GetAccountAuthSecret#1")
+			{
+				var authSecretBody = item.ReadFile().Body as CCredentials_GetAccountAuthSecret_Response;
+
+				if (authSecretBody != null)
+				{
+					accountAuthSecrets[ authSecretBody.secret_id ] = authSecretBody.secret;
+				}
+			}
+
 			return item;
 		}
 

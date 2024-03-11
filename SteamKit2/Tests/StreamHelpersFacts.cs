@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Threading;
@@ -18,7 +19,10 @@ namespace Tests
             
             for ( var i = 0; i < threads.Length; i++)
             {
-                threads[i] = new Thread(ThreadStart);
+                threads[ i ] = new Thread( ThreadStart )
+                {
+                    Name = $"SK2-Test-{i}"
+                };
                 threads[i].Start(i);
             }
 
@@ -33,7 +37,7 @@ namespace Tests
             }
         }
 
-        ConcurrentBag<Exception> threadExceptions = new ConcurrentBag<Exception>();
+        ConcurrentBag<Exception> threadExceptions = [];
 
         void ThreadStart(object o)
         {
@@ -41,18 +45,16 @@ namespace Tests
             {
                 var threadNumber = (int)o;
 
-                using (var ms = new MemoryStream())
+                using var ms = new MemoryStream();
+                var bytes = BitConverter.GetBytes( threadNumber );
+                ms.Write( bytes, 0, bytes.Length );
+
+                for ( var i = 0; i < 1000; i++ )
                 {
-                    var bytes = BitConverter.GetBytes(threadNumber);
-                    ms.Write(bytes, 0, bytes.Length);
+                    ms.Seek( 0, SeekOrigin.Begin );
 
-                    for (var i = 0; i < 1000; i++)
-                    {
-                        ms.Seek(0, SeekOrigin.Begin);
-
-                        var value = ReadValue(threadNumber, ms).ToString(CultureInfo.InvariantCulture);
-                        Assert.Equal(threadNumber.ToString(CultureInfo.InvariantCulture), value);
-                    }
+                    var value = ReadValue( threadNumber, ms ).ToString( CultureInfo.InvariantCulture );
+                    Assert.Equal( threadNumber.ToString( CultureInfo.InvariantCulture ), value );
                 }
             }
             catch (Exception ex)
@@ -60,19 +62,19 @@ namespace Tests
                 threadExceptions.Add(ex);
             }
 
-            IConvertible ReadValue(int threadNumber, Stream s)
+            static IConvertible ReadValue(int threadNumber, Stream s)
             {
-                switch (threadNumber % 7)
+                return ( threadNumber % 7 ) switch
                 {
-                    case 0: return s.ReadByte();
-                    case 1: return s.ReadInt64();
-                    case 2: return s.ReadUInt16();
-                    case 3: return s.ReadInt32();
-                    case 4: return s.ReadUInt32();
-                    case 5: return s.ReadInt64();
-                    case 6: return s.ReadUInt64();
-                    default: throw new Exception("Unreachable");
-                }
+                    0 => s.ReadByte(),
+                    1 => s.ReadInt64(),
+                    2 => s.ReadUInt16(),
+                    3 => s.ReadInt32(),
+                    4 => s.ReadUInt32(),
+                    5 => s.ReadInt64(),
+                    6 => s.ReadUInt64(),
+                    _ => throw new UnreachableException(),
+                };
             }
         }
     }

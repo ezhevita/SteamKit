@@ -80,7 +80,7 @@ namespace SteamKit2
         /// <value>
         /// 	<c>true</c> if this instance is protobuf backed; otherwise, <c>false</c>.
         /// </value>
-        public bool IsProto { get { return true; } }
+        public bool IsProto => true;
         /// <summary>
         /// Gets the network message type of this packet message.
         /// </summary>
@@ -95,15 +95,28 @@ namespace SteamKit2
         /// <value>
         /// The target job id.
         /// </value>
-        public ulong TargetJobID { get; }
+        public ulong TargetJobID => Header.Proto.jobid_target;
         /// <summary>
         /// Gets the source job id for this packet message.
         /// </summary>
         /// <value>
         /// The source job id.
         /// </value>
-        public ulong SourceJobID { get; }
-
+        public ulong SourceJobID => Header.Proto.jobid_source;
+        /// <summary>
+        /// Gets the header for this packet message.
+        /// </summary>
+        /// <value>
+        /// The header.
+        /// </value>
+        internal MsgHdrProtoBuf Header;
+        /// <summary>
+        /// Gets the offset in payload to the body after the header.
+        /// </summary>
+        /// <value>
+        /// The offset in payload after the header.
+        /// </value>
+        internal long BodyOffset;
 
         byte[] payload;
 
@@ -115,24 +128,17 @@ namespace SteamKit2
         /// <param name="data">The data.</param>
         public PacketClientMsgProtobuf( EMsg eMsg, byte[] data )
         {
-            if ( data == null )
-            {
-                throw new ArgumentNullException( nameof(data) );
-            }
+            ArgumentNullException.ThrowIfNull( data );
 
             MsgType = eMsg;
             payload = data;
 
-            MsgHdrProtoBuf protobufHeader = new MsgHdrProtoBuf();
+            Header = new MsgHdrProtoBuf();
 
             // we need to pull out the job ids, so we deserialize the protobuf header
-            using ( MemoryStream ms = new MemoryStream( data ) )
-            {
-                protobufHeader.Deserialize( ms );
-            }
-
-            TargetJobID = protobufHeader.Proto.jobid_target;
-            SourceJobID = protobufHeader.Proto.jobid_source;
+            using MemoryStream ms = new MemoryStream( data );
+            Header.Deserialize( ms );
+            BodyOffset = ms.Position;
         }
 
 
@@ -173,14 +179,28 @@ namespace SteamKit2
         /// <value>
         /// The target job id.
         /// </value>
-        public ulong TargetJobID { get; }
+        public ulong TargetJobID => Header.TargetJobID;
         /// <summary>
         /// Gets the source job id for this packet message.
         /// </summary>
         /// <value>
         /// The source job id.
         /// </value>
-        public ulong SourceJobID { get; }
+        public ulong SourceJobID => Header.SourceJobID;
+        /// <summary>
+        /// Gets the header for this packet message.
+        /// </summary>
+        /// <value>
+        /// The header.
+        /// </value>
+        internal ExtendedClientMsgHdr Header;
+        /// <summary>
+        /// Gets the offset in payload to the body after the header.
+        /// </summary>
+        /// <value>
+        /// The offset in payload after the header.
+        /// </value>
+        internal long BodyOffset;
 
         byte[] payload;
 
@@ -192,24 +212,17 @@ namespace SteamKit2
         /// <param name="data">The data.</param>
         public PacketClientMsg( EMsg eMsg, byte[] data )
         {
-            if ( data == null )
-            {
-                throw new ArgumentNullException( nameof(data) );
-            }
+            ArgumentNullException.ThrowIfNull( data );
 
             MsgType = eMsg;
             payload = data;
 
-            ExtendedClientMsgHdr extendedHdr = new ExtendedClientMsgHdr();
+            Header = new ExtendedClientMsgHdr();
 
             // deserialize the extended header to get our hands on the job ids
-            using ( MemoryStream ms = new MemoryStream( data ) )
-            {
-                extendedHdr.Deserialize( ms );
-            }
-
-            TargetJobID = extendedHdr.TargetJobID;
-            SourceJobID = extendedHdr.SourceJobID;
+            using MemoryStream ms = new MemoryStream( data );
+            Header.Deserialize( ms );
+            BodyOffset = ms.Position;
         }
 
 
@@ -250,14 +263,28 @@ namespace SteamKit2
         /// <value>
         /// The target job id.
         /// </value>
-        public ulong TargetJobID { get; }
+        public ulong TargetJobID => Header.TargetJobID;
         /// <summary>
         /// Gets the source job id for this packet message.
         /// </summary>
         /// <value>
         /// The source job id.
         /// </value>
-        public ulong SourceJobID { get; }
+        public ulong SourceJobID => Header.SourceJobID;
+        /// <summary>
+        /// Gets the header for this packet message.
+        /// </summary>
+        /// <value>
+        /// The header.
+        /// </value>
+        internal MsgHdr Header;
+        /// <summary>
+        /// Gets the offset in payload to the body after the header.
+        /// </summary>
+        /// <value>
+        /// The offset in payload after the header.
+        /// </value>
+        internal long BodyOffset;
 
         byte[] payload;
 
@@ -269,24 +296,17 @@ namespace SteamKit2
         /// <param name="data">The data.</param>
         public PacketMsg( EMsg eMsg, byte[] data )
         {
-            if ( data == null )
-            {
-                throw new ArgumentNullException( nameof(data) );
-            }
+            ArgumentNullException.ThrowIfNull( data );
 
             MsgType = eMsg;
             payload = data;
 
-            MsgHdr msgHdr = new MsgHdr();
+            Header = new MsgHdr();
 
             // deserialize the header to get our hands on the job ids
-            using ( MemoryStream ms = new MemoryStream( data ) )
-            {
-                msgHdr.Deserialize( ms );
-            }
-
-            TargetJobID = msgHdr.TargetJobID;
-            SourceJobID = msgHdr.SourceJobID;
+            using MemoryStream ms = new MemoryStream( data );
+            Header.Deserialize( ms );
+            BodyOffset = ms.Position;
         }
 
 

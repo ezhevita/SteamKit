@@ -5,6 +5,7 @@
 
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using ProtoBuf;
 using SteamKit2.Internal;
@@ -54,11 +55,14 @@ namespace SteamKit2
         /// <value>
         /// The <see cref="SteamID"/>.
         /// </value>
-        public override SteamID SteamID
+#pragma warning disable CS8765 // Nullability of type of parameter doesn't match overridden member (possibly because of nullability attributes).
+        [DisallowNull, NotNull]
+        public override SteamID? SteamID
         {
             get => ProtoHeader.steamid;
             set => ProtoHeader.steamid = value ?? throw new ArgumentNullException( nameof(value) );
         }
+#pragma warning restore CS8765 // Nullability of type of parameter doesn't match overridden member (possibly because of nullability attributes).
 
         /// <summary>
         /// Gets or sets the target job id for this client message.
@@ -105,9 +109,12 @@ namespace SteamKit2
         public ClientMsgProtobuf( IPacketMsg msg )
             : this( msg.GetMsgTypeWithNullCheck( nameof(msg) ) )
         {
-            DebugLog.Assert(msg.IsProto, "ClientMsgProtobuf", "ClientMsgProtobuf used for non-proto message!");
+            if ( msg is not PacketClientMsgProtobuf packetMsgProto )
+            {
+                throw new InvalidDataException( "ClientMsgProtobuf used for non-proto message!" );
+            }
 
-            Deserialize( msg.GetData() );
+            Header = packetMsgProto.Header;
         }
 
 
@@ -119,36 +126,25 @@ namespace SteamKit2
         {
             throw new NotSupportedException( "ClientMsgProtobuf is for reading only. Use ClientMsgProtobuf<T> for serializing messages." );
         }
-
-        /// <summary>
-        /// Initializes this client message by deserializing the specified data.
-        /// </summary>
-        /// <param name="data">The data representing a client message.</param>
-        public override void Deserialize( byte[] data )
-        {
-            if ( data == null )
-            {
-                throw new ArgumentNullException( nameof(data) );
-            }
-
-            using ( MemoryStream ms = new MemoryStream( data ) )
-            {
-                Header.Deserialize( ms );
-            }
-        }
     }
 
     /// <summary>
     /// Represents a protobuf backed client message.
     /// </summary>
-    /// <typeparam name="BodyType">The body type of this message.</typeparam>
-    public sealed class ClientMsgProtobuf<BodyType> : ClientMsgProtobuf
-        where BodyType : IExtensible, new()
+    /// <typeparam name="TBody">The body type of this message.</typeparam>
+    public sealed class ClientMsgProtobuf<TBody> : ClientMsgProtobuf
+        where TBody : IExtensible, new()
     {
+        private TBody _body;
+
         /// <summary>
         /// Gets the body structure of this message.
         /// </summary>
-        public BodyType Body { get; private set; }
+        public TBody Body
+        {
+            get => _body;
+            set => _body = value ?? throw new ArgumentNullException( nameof( value ) );
+        }
 
 
         /// <summary>
@@ -160,7 +156,7 @@ namespace SteamKit2
         public ClientMsgProtobuf( EMsg eMsg, int payloadReserve = 64 )
             : base( payloadReserve )
         {
-            Body = new BodyType();
+            _body = new TBody();
 
             // set our emsg
             Header.Msg = eMsg;
@@ -188,9 +184,27 @@ namespace SteamKit2
         public ClientMsgProtobuf( IPacketMsg msg )
             : this( msg.GetMsgTypeWithNullCheck( nameof(msg) ) )
         {
-            DebugLog.Assert( msg.IsProto, "ClientMsgProtobuf<>", $"ClientMsgProtobuf<{typeof(BodyType).FullName}> used for non-proto message!" );
+            if ( msg is not PacketClientMsgProtobuf packetMsg )
+            {
+                throw new InvalidDataException( $"ClientMsgProtobuf<{typeof(TBody).FullName}> used for non-proto message!" );
+            }
 
-            Deserialize( msg.GetData() );
+            Header = packetMsg.Header;
+
+            var data = packetMsg.GetData();
+            var offset = (int)packetMsg.BodyOffset;
+            using MemoryStream ms = new MemoryStream( data, offset, data.Length - offset );
+
+            Body = Serializer.Deserialize<TBody>( ms );
+
+            // the rest of the data is the payload
+            int payloadLen = ( int )( ms.Length - ms.Position );
+
+            if ( payloadLen > 0 )
+            {
+                ms.CopyTo( Payload, payloadLen );
+                Payload.Seek( 0, SeekOrigin.Begin );
+            }
         }
 
         /// <summary>
@@ -201,47 +215,21 @@ namespace SteamKit2
         /// </returns>
         public override byte[] Serialize()
         {
-            using ( MemoryStream ms = new MemoryStream() )
-            {
-                Header.Serialize( ms );
-                Serializer.Serialize( ms, Body );
-                Payload.WriteTo( ms );
+            using MemoryStream ms = new MemoryStream();
+            Header.Serialize( ms );
+            Serializer.Serialize( ms, Body );
+            Payload.WriteTo( ms );
 
-                return ms.ToArray();
-            }
-        }
-        /// <summary>
-        /// Initializes this client message by deserializing the specified data.
-        /// </summary>
-        /// <param name="data">The data representing a client message.</param>
-        public override void Deserialize( byte[] data )
-        {
-            if ( data == null )
-            {
-                throw new ArgumentNullException( nameof(data) );
-            }
-
-            using ( MemoryStream ms = new MemoryStream( data ) )
-            {
-                Header.Deserialize( ms );
-                Body = Serializer.Deserialize<BodyType>( ms );
-
-                // the rest of the data is the payload
-                int payloadOffset = ( int )ms.Position;
-                int payloadLen = ( int )( ms.Length - ms.Position );
-
-                Payload.Write( data, payloadOffset, payloadLen );
-                Payload.Seek( 0, SeekOrigin.Begin );
-            }
+            return ms.ToArray();
         }
     }
 
     /// <summary>
     /// Represents a struct backed client message.
     /// </summary>
-    /// <typeparam name="BodyType">The body type of this message.</typeparam>
-    public sealed class ClientMsg<BodyType> : MsgBase<ExtendedClientMsgHdr>
-        where BodyType : ISteamSerializableMessage, new()
+    /// <typeparam name="TBody">The body type of this message.</typeparam>
+    public sealed class ClientMsg<TBody> : MsgBase<ExtendedClientMsgHdr>
+        where TBody : ISteamSerializableMessage, new()
     {
         /// <summary>
         /// Gets a value indicating whether this client message is protobuf backed.
@@ -275,11 +263,14 @@ namespace SteamKit2
         /// <value>
         /// The <see cref="SteamID"/>.
         /// </value>
-        public override SteamID SteamID
+#pragma warning disable CS8765 // Nullability of type of parameter doesn't match overridden member (possibly because of nullability attributes).
+        [DisallowNull, NotNull]
+        public override SteamID? SteamID
         {
             get => Header.SteamID;
             set => Header.SteamID = value ?? throw new ArgumentNullException( nameof(value) );
         }
+#pragma warning restore CS8765 // Nullability of type of parameter doesn't match overridden member (possibly because of nullability attributes).
 
         /// <summary>
         /// Gets or sets the target job id for this client message.
@@ -308,7 +299,7 @@ namespace SteamKit2
         /// <summary>
         /// Gets the body structure of this message.
         /// </summary>
-        public BodyType Body { get; }
+        public TBody Body { get; }
 
 
         /// <summary>
@@ -319,7 +310,7 @@ namespace SteamKit2
         public ClientMsg( int payloadReserve = 64 )
             : base( payloadReserve )
         {
-            Body = new BodyType();
+            Body = new TBody();
 
             // assign our emsg
             Header.SetEMsg( Body.GetEMsg() );
@@ -334,10 +325,7 @@ namespace SteamKit2
         public ClientMsg( MsgBase<ExtendedClientMsgHdr> msg, int payloadReserve = 64 )
             : this( payloadReserve )
         {
-            if ( msg == null )
-            {
-                throw new ArgumentNullException( nameof(msg) );
-            }
+            ArgumentNullException.ThrowIfNull( msg );
 
             // our target is where the message came from
             Header.TargetJobID = msg.Header.SourceJobID;
@@ -351,14 +339,29 @@ namespace SteamKit2
         public ClientMsg( IPacketMsg msg )
             : this()
         {
-            if ( msg == null )
+            ArgumentNullException.ThrowIfNull( msg );
+
+            if ( msg is not PacketClientMsg packetMsg )
             {
-                throw new ArgumentNullException( nameof(msg) );
+                throw new InvalidDataException( $"ClientMsg<{typeof( TBody ).FullName}> used for proto message!" );
             }
 
-            DebugLog.Assert( !msg.IsProto, "ClientMsg", $"ClientMsg<{typeof(BodyType).FullName}> used for proto message!" );
+            Header = packetMsg.Header;
 
-            Deserialize( msg.GetData() );
+            var data = packetMsg.GetData();
+            var offset = (int)packetMsg.BodyOffset;
+            using MemoryStream ms = new MemoryStream( data, offset, data.Length - offset );
+
+            Body.Deserialize( ms );
+
+            // the rest of the data is the payload
+            int payloadLen = ( int )( ms.Length - ms.Position );
+
+            if ( payloadLen > 0 )
+            {
+                ms.CopyTo( Payload, payloadLen );
+                Payload.Seek( 0, SeekOrigin.Begin );
+            }
         }
 
         /// <summary>
@@ -369,47 +372,21 @@ namespace SteamKit2
         /// </returns>
         public override byte[] Serialize()
         {
-            using ( MemoryStream ms = new MemoryStream() )
-            {
-                Header.Serialize( ms );
-                Body.Serialize( ms );
-                Payload.WriteTo( ms );
+            using MemoryStream ms = new MemoryStream();
+            Header.Serialize( ms );
+            Body.Serialize( ms );
+            Payload.WriteTo( ms );
 
-                return ms.ToArray();
-            }
-        }
-        /// <summary>
-        /// Initializes this client message by deserializing the specified data.
-        /// </summary>
-        /// <param name="data">The data representing a client message.</param>
-        public override void Deserialize( byte[] data )
-        {
-            if ( data == null )
-            {
-                throw new ArgumentNullException( nameof(data) );
-            }
-
-            using ( MemoryStream ms = new MemoryStream( data ) )
-            {
-                Header.Deserialize( ms );
-                Body.Deserialize( ms );
-
-                // the rest of the data is the payload
-                int payloadOffset = ( int )ms.Position;
-                int payloadLen = ( int )( ms.Length - ms.Position );
-
-                Payload.Write( data, payloadOffset, payloadLen );
-                Payload.Seek( 0, SeekOrigin.Begin );
-            }
+            return ms.ToArray();
         }
     }
 
     /// <summary>
     /// Represents a struct backed message without session or client info.
     /// </summary>
-    /// <typeparam name="BodyType">The body type of this message.</typeparam>
-    public sealed class Msg<BodyType> : MsgBase<MsgHdr>
-        where BodyType : ISteamSerializableMessage, new()
+    /// <typeparam name="TBody">The body type of this message.</typeparam>
+    public sealed class Msg<TBody> : MsgBase<MsgHdr>
+        where TBody : ISteamSerializableMessage, new()
     {
         /// <summary>
         /// Gets a value indicating whether this client message is protobuf backed.
@@ -441,7 +418,7 @@ namespace SteamKit2
         /// <value>
         /// The <see cref="SteamID"/>.
         /// </value>
-        public override SteamID SteamID { get; set; }
+        public override SteamID? SteamID { get; set; }
 
         /// <summary>
         /// Gets or sets the target job id for this client message.
@@ -470,7 +447,7 @@ namespace SteamKit2
         /// <summary>
         /// Gets the structure body of the message.
         /// </summary>
-        public BodyType Body { get; }
+        public TBody Body { get; }
 
 
         /// <summary>
@@ -481,7 +458,7 @@ namespace SteamKit2
         public Msg( int payloadReserve = 0 )
             : base( payloadReserve )
         {
-            Body = new BodyType();
+            Body = new TBody();
 
             // assign our emsg
             Header.SetEMsg( Body.GetEMsg() );
@@ -496,10 +473,7 @@ namespace SteamKit2
         public Msg( MsgBase<MsgHdr> msg, int payloadReserve = 0 )
             : this( payloadReserve )
         {
-            if ( msg == null )
-            {
-                throw new ArgumentNullException( nameof(msg) );
-            }
+            ArgumentNullException.ThrowIfNull( msg );
 
             // our target is where the message came from
             Header.TargetJobID = msg.Header.SourceJobID;
@@ -513,12 +487,29 @@ namespace SteamKit2
         public Msg( IPacketMsg msg )
             : this()
         {
-            if ( msg == null )
+            ArgumentNullException.ThrowIfNull( msg );
+
+            if ( msg is not PacketMsg packetMsg )
             {
-                throw new ArgumentNullException( nameof(msg) );
+                throw new InvalidDataException( $"ClientMsg<{typeof( TBody ).FullName}> used for proto message!" );
             }
 
-            Deserialize( msg.GetData() );
+            Header = packetMsg.Header;
+
+            var data = packetMsg.GetData();
+            var offset = (int)packetMsg.BodyOffset;
+            using MemoryStream ms = new MemoryStream( data, offset, data.Length - offset );
+
+            Body.Deserialize( ms );
+
+            // the rest of the data is the payload
+            int payloadLen = ( int )( ms.Length - ms.Position );
+
+            if ( payloadLen > 0 )
+            {
+                ms.CopyTo( Payload, payloadLen );
+                Payload.Seek( 0, SeekOrigin.Begin );
+            }
         }
 
 
@@ -530,39 +521,12 @@ namespace SteamKit2
         /// </returns>
         public override byte[] Serialize()
         {
-            using ( MemoryStream ms = new MemoryStream() )
-            {
-                Header.Serialize( ms );
-                Body.Serialize( ms );
-                Payload.WriteTo( ms );
+            using MemoryStream ms = new MemoryStream();
+            Header.Serialize( ms );
+            Body.Serialize( ms );
+            Payload.WriteTo( ms );
 
-                return ms.ToArray();
-            }
+            return ms.ToArray();
         }
-        /// <summary>
-        /// Initializes this client message by deserializing the specified data.
-        /// </summary>
-        /// <param name="data">The data representing a client message.</param>
-        public override void Deserialize( byte[] data )
-        {
-            if ( data == null )
-            {
-                throw new ArgumentNullException( nameof(data) );
-            }
-
-            using ( MemoryStream ms = new MemoryStream( data ) )
-            {
-                Header.Deserialize( ms );
-                Body.Deserialize( ms );
-
-                // the rest of the data is the payload
-                int payloadOffset = ( int )ms.Position;
-                int payloadLen = ( int )( ms.Length - ms.Position );
-
-                Payload.Write( data, payloadOffset, payloadLen );
-                Payload.Seek( 0, SeekOrigin.Begin );
-            }
-        }
-
     }
 }

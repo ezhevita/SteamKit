@@ -2,7 +2,6 @@
 using System.Drawing;
 using System.IO;
 using System.Linq;
-using System.Linq.Expressions;
 using System.Windows.Forms;
 using NetHookAnalyzer2.Specializations;
 using WinForms = System.Windows.Forms;
@@ -23,8 +22,13 @@ namespace NetHookAnalyzer2
 			specializations = LoadMessageObjectSpecializations();
 		}
 
+#pragma warning disable IDE0069 // Disposable fields should be disposed
+
 		IDisposable itemsListViewFirstColumnHiderDisposable;
 		FileSystemWatcher folderWatcher;
+
+#pragma warning restore IDE0069 // Disposable fields should be disposed
+
 		readonly ISpecialization[] specializations;
 
 		static ISpecialization[] LoadMessageObjectSpecializations()
@@ -33,6 +37,8 @@ namespace NetHookAnalyzer2
 			{
 				new ClientServiceMethodSpecialization(),
 				new ClientServiceMethodResponseSpecialization(),
+				new RemoteClientSteamToSteamSpecialization(),
+				new RemoteClientSteamBroadcastSpecialization(),
 				new GCGenericSpecialization()
 				{
 					GameCoordinatorSpecializations = new IGameCoordinatorSpecialization[]
@@ -49,9 +55,9 @@ namespace NetHookAnalyzer2
 						new ArtifactCacheSubscribedGCSpecialization(),
 						new ArtifactSOMultipleObjectsGCSpecialization(),
 						new ArtifactSOSingleObjectGCSpecialization(),
-                        new UnderlordsCacheSubscribedGCSpecialization(),
-                        new UnderlordsSOMultipleObjectsGCSpecialization(),
-                        new UnderlordsSOSingleObjectGCSpecialization(),
+						new UnderlordsCacheSubscribedGCSpecialization(),
+						new UnderlordsSOMultipleObjectsGCSpecialization(),
+						new UnderlordsSOSingleObjectGCSpecialization(),
 					}
 				}
 			};
@@ -101,7 +107,7 @@ namespace NetHookAnalyzer2
 			return Path.Combine(nethookDirectory, latestDump);
 		}
 
-		NetHookDump Dump { get; set; }
+		NetHookDump Dump;
 
 		void RepopulateInterface()
 		{
@@ -109,28 +115,36 @@ namespace NetHookAnalyzer2
 			RepopulateTreeView();
 		}
 
-		void RepopulateListBox()
+		Func<NetHookItem, bool> GetFilterPredicate()
 		{
-			var searchTerm = searchTextBox.Text;
-			Expression<Func<NetHookItem, bool>> predicate;
-			if (searchTerm == SearchTextBoxPlaceholderText || string.IsNullOrWhiteSpace(searchTerm))
-			{
-				predicate = nhi => true;
-			}
-			else
-			{
-				predicate = nhi => (nhi.Name.IndexOf(searchTerm, StringComparison.InvariantCultureIgnoreCase) >= 0) ||
-					(nhi.InnerMessageName != null && nhi.InnerMessageName.IndexOf(searchTerm, StringComparison.InvariantCultureIgnoreCase) >= 0);
-			}
 
 			var outAllowed = inOutRadioButton.Checked || outRadioButton.Checked;
 			var inAllowed = inOutRadioButton.Checked || inRadioButton.Checked;
-			Expression<Func<NetHookItem, bool>> directionPredicate = nhi => (nhi.Direction == NetHookItem.PacketDirection.Out && outAllowed) || (nhi.Direction == NetHookItem.PacketDirection.In && inAllowed);
+			bool directionPredicate( NetHookItem nhi ) => ( nhi.Direction == NetHookItem.PacketDirection.Out && outAllowed ) || ( nhi.Direction == NetHookItem.PacketDirection.In && inAllowed );
 
-			var listViewItems = Dump.Items.Where(directionPredicate).Where(predicate).Select(x => x.AsListViewItem());
+			var searchTerm = searchTextBox.Text;
+			Predicate<NetHookItem> searchPredicate;
+			if ( searchTerm == SearchTextBoxPlaceholderText || string.IsNullOrWhiteSpace( searchTerm ) )
+			{
+				searchPredicate = nhi => true;
+			}
+			else
+			{
+				searchPredicate = nhi => ( nhi.EMsg.ToString().IndexOf( searchTerm, StringComparison.InvariantCultureIgnoreCase ) >= 0 ) ||
+					( nhi.InnerMessageName != null && nhi.InnerMessageName.IndexOf( searchTerm, StringComparison.InvariantCultureIgnoreCase ) >= 0 );
+			}
 
+			return nhi => directionPredicate( nhi ) && searchPredicate( nhi );
+		}
+
+		void RepopulateListBox()
+		{
+			var listViewItems = Dump.Items.Where(GetFilterPredicate()).Select(x => x.AsListViewItem());
+
+			itemsListView.BeginUpdate();
 			itemsListView.Items.Clear();
 			itemsListView.Items.AddRange(listViewItems.ToArray());
+			itemsListView.EndUpdate();
 		}
 
 		#endregion
@@ -147,43 +161,81 @@ namespace NetHookAnalyzer2
 			Application.Exit();
 		}
 
-		void OnOpenToolStripMenuItemClick(object sender, EventArgs e)
+		void OnOpenToolStripMenuItemClick( object sender, EventArgs e )
 		{
-			var dialog = new FolderBrowserDialog { ShowNewFolderButton = false };
-			var latestNethookDir = GetLatestNethookDumpDirectory();
-			if (latestNethookDir != null)
+			string dumpDirectory;
+
+			using ( var dialog = new FolderBrowserDialog() )
 			{
-				dialog.SelectedPath = GetLatestNethookDumpDirectory();
+				dialog.ShowNewFolderButton = false;
+
+				var latestNethookDir = GetLatestNethookDumpDirectory();
+				if ( latestNethookDir != null )
+				{
+					dialog.SelectedPath = latestNethookDir;
+				}
+
+				if ( dialog.ShowDialog() != WinForms.DialogResult.OK )
+				{
+					return;
+				}
+
+				dumpDirectory = dialog.SelectedPath;
 			}
 
-			if (dialog.ShowDialog() != WinForms.DialogResult.OK)
-			{
-				return;
-			}
+			OpenDirectory( dumpDirectory );
 
-			var dumpDirectory = dialog.SelectedPath;
+		}
 
+		void OnOpenLatestFolderToolStripMenuItemClick( object sender, EventArgs e )
+		{
+            var steamDirectory = SteamUtils.GetSteamDirectory();
+            if ( steamDirectory == null )
+            {
+                MessageBox.Show( "Failed to find Steam directory.", nameof( NetHookAnalyzer2 ), MessageBoxButtons.OK, MessageBoxIcon.Warning );
+                return;
+            }
+
+            var nethookDirectory = Path.Combine( steamDirectory, "nethook" );
+            if ( !Directory.Exists( nethookDirectory ) )
+            {
+                MessageBox.Show( $"Directory '{nethookDirectory}' does not exist.", nameof( NetHookAnalyzer2 ), MessageBoxButtons.OK, MessageBoxIcon.Warning );
+                return;
+            }
+
+            var nethookDumpDirs = Directory.GetDirectories( nethookDirectory );
+            var latestDump = nethookDumpDirs.LastOrDefault();
+            if ( latestDump == null )
+            {
+                MessageBox.Show( $"There are no directories in '{nethookDirectory}'.", nameof( NetHookAnalyzer2 ), MessageBoxButtons.OK, MessageBoxIcon.Warning );
+                return;
+            }
+
+            OpenDirectory( Path.Combine( nethookDirectory, latestDump ) );
+        }
+
+		void OpenDirectory(string dumpDirectory)
+		{
 			var dump = new NetHookDump();
-			dump.LoadFromDirectory(dumpDirectory);
+			dump.LoadFromDirectory( dumpDirectory );
 			Dump = dump;
 
-			Text = string.Format("NetHook2 Dump Analyzer - [{0}]", dumpDirectory);
+			Text = string.Format( "NetHook2 Dump Analyzer - [{0}]", dumpDirectory );
 
 			selectedListViewItem = null;
 			RepopulateInterface();
-
-			if (itemsListView.Items.Count > 0)
-			{
-				itemsListView.Select();
-				itemsListView.Items[0].Selected = true;
-			}
-
-			InitializeFileSystemWatcher(dumpDirectory);
 
 			if (automaticallySelectNewItemsToolStripMenuItem.Checked)
 			{
 				SelectLastItem();
 			}
+			else if (itemsListView.Items.Count > 0)
+			{
+				itemsListView.Select();
+				itemsListView.Items[ 0 ].Selected = true;
+			}
+
+			InitializeFileSystemWatcher(dumpDirectory);
 		}
 
 		void OnDirectionFilterCheckedChanged(object sender, EventArgs e)
@@ -289,19 +341,31 @@ namespace NetHookAnalyzer2
 
 		void HandleFileCreated(string fullPath)
 		{
-			var item = Dump.AddItemFromPath(fullPath);
+			var item = Dump.AddItemFromFile(new FileInfo(fullPath));
 			if (item == null)
 			{
 				return;
 			}
 
-			var listViewItem = item.AsListViewItem();
-			itemsListView.Items.Add(listViewItem);
-			
-			if (automaticallySelectNewItemsToolStripMenuItem.Checked)
+			itemsListView.Invoke( ( MethodInvoker ) delegate ()
 			{
-				SelectLastItem();
-			}
+				if (!GetFilterPredicate().Invoke(item))
+				{
+					return;
+				}
+
+				var listViewItem = item.AsListViewItem();
+
+				itemsListView.BeginUpdate();
+				itemsListView.Items.Add( listViewItem );
+
+				if ( automaticallySelectNewItemsToolStripMenuItem.Checked )
+				{
+					SelectLastItem();
+				}
+
+				itemsListView.EndUpdate();
+			} );
 		}
 
 		void OnFolderWatcherCreated(object sender, FileSystemEventArgs e)
@@ -363,14 +427,16 @@ namespace NetHookAnalyzer2
 				return;
 			}
 
+			itemExplorerTreeView.BeginUpdate();
 			itemExplorerTreeView.Nodes.Clear();
-			itemExplorerTreeView.Nodes.AddRange(BuildTree(item).Nodes.Cast<TreeNode>().ToArray());
+			itemExplorerTreeView.Nodes.Add(BuildTree(item));
 			itemExplorerTreeView.Nodes[0].EnsureVisible(); // Scroll to top
+			itemExplorerTreeView.EndUpdate();
 		}
 
 		TreeNode BuildTree(NetHookItem item)
 		{
-			return new NetHookItemTreeBuilder(item) { Specializations = specializations }.BuildTree(showAllCheckBox.Checked);
+			return NetHookItemTreeBuilder.BuildTree( item, specializations, showAllCheckBox.Checked );
 		}
 
 		void OnAutomaticallySelectNewItemsCheckedChanged(object sender, EventArgs e)
@@ -385,18 +451,25 @@ namespace NetHookAnalyzer2
 
 		void SelectLastItem()
 		{
-
 			if (itemsListView.Items.Count == 0)
 			{
 				return;
 			}
 
-			var lastItem = itemsListView.Items[itemsListView.Items.Count - 1];
+			var lastItem = itemsListView.Items[ ^1 ];
 			if (!lastItem.Selected)
 			{
 				lastItem.Selected = true;
 				lastItem.Focused = true;
 				lastItem.EnsureVisible();
+			}
+		}
+
+		private void OnItemExplorerTreeViewNodeMouseClick( object sender, TreeNodeMouseClickEventArgs e )
+		{
+			if ( e.Button == MouseButtons.Right && e.Node is TreeNodeObjectExplorer objectExplorer )
+			{
+				objectExplorer.CreateContextMenu();
 			}
 		}
 	}

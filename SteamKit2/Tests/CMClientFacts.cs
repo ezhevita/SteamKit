@@ -24,7 +24,7 @@ namespace Tests
 
                 var data = Serialize(msgHdr);
 
-                var packetMsg = CMClient.GetPacketMsg(data);
+                var packetMsg = CMClient.GetPacketMsg(data, DebugLogContext.Instance);
                 Assert.IsAssignableFrom<PacketMsg>(packetMsg);
             }
         }
@@ -36,7 +36,7 @@ namespace Tests
             var msgHdr = new MsgHdrProtoBuf { Msg = msg };
 
             var data = Serialize(msgHdr);
-            var packetMsg = CMClient.GetPacketMsg(data);
+            var packetMsg = CMClient.GetPacketMsg(data, DebugLogContext.Instance);
             Assert.IsAssignableFrom<PacketClientMsgProtobuf>(packetMsg);
         }
 
@@ -47,7 +47,7 @@ namespace Tests
             var msgHdr = new ExtendedClientMsgHdr { Msg = msg };
 
             var data = Serialize(msgHdr);
-            var packetMsg = CMClient.GetPacketMsg(data);
+            var packetMsg = CMClient.GetPacketMsg(data, DebugLogContext.Instance);
             Assert.IsAssignableFrom<PacketClientMsg>(packetMsg);
         }
 
@@ -59,7 +59,7 @@ namespace Tests
 
             var data = Serialize(msgHdr);
             Array.Copy(BitConverter.GetBytes(-1), 0, data, 4, 4);
-            var packetMsg = CMClient.GetPacketMsg(data);
+            var packetMsg = CMClient.GetPacketMsg(data, DebugLogContext.Instance);
             Assert.Null(packetMsg);
         }
 
@@ -67,62 +67,21 @@ namespace Tests
         public void GetPacketMsgFailsWithTinyArray()
         {
             var data = new byte[3];
-            var packetMsg = CMClient.GetPacketMsg(data);
+            var packetMsg = CMClient.GetPacketMsg(data, DebugLogContext.Instance);
             Assert.Null(packetMsg);
-        }
-
-        [Fact]
-        public void ServerLookupIsClearedWhenDisconnecting()
-        {
-            var msg = new ClientMsgProtobuf<CMsgClientServerList>( EMsg.ClientServerList );
-            msg.Body.servers.Add( new CMsgClientServerList.Server
-            {
-                server_type = ( int )EServerType.CM,
-                server_ip = 0x7F000001, // 127.0.0.1
-                server_port = 1234
-            });
-
-            var client = new DummyCMClient();
-            client.HandleClientMsg( msg );
-
-            Assert.Single( client.GetServersOfType( EServerType.CM ) );
-
-            client.DummyDisconnect();
-            Assert.Empty( client.GetServersOfType( EServerType.CM ) );
-        }
-
-        [Fact]
-        public void ServerLookupDoesNotAccumulateDuplicates()
-        {
-            var msg = new ClientMsgProtobuf<CMsgClientServerList>( EMsg.ClientServerList );
-            msg.Body.servers.Add( new CMsgClientServerList.Server
-            {
-                server_type = ( int )EServerType.CM,
-                server_ip = 0x7F000001, // 127.0.0.1
-                server_port = 1234
-            });
-
-            var client = new DummyCMClient();
-            client.HandleClientMsg( msg );
-            Assert.Single( client.GetServersOfType( EServerType.CM ) );
-
-            client.HandleClientMsg( msg );
-            Assert.Single( client.GetServersOfType( EServerType.CM ) );
         }
 
         static byte[] Serialize(ISteamSerializableHeader hdr)
         {
-            using (var ms = new MemoryStream())
-            {
-                hdr.Serialize(ms);
-                return ms.ToArray();
-            }
+            using var ms = new MemoryStream();
+            hdr.Serialize( ms );
+            return ms.ToArray();
         }
 
         class DummyCMClient : CMClient
         {
             public DummyCMClient()
-                : base( SteamConfiguration.CreateDefault() )
+                : base( SteamConfiguration.CreateDefault(), "Dummy" )
             {
             }
 
@@ -133,7 +92,7 @@ namespace Tests
             }
 
             public void HandleClientMsg( IClientMsg clientMsg )
-                => OnClientMsgReceived( GetPacketMsg( clientMsg.Serialize() ) );
+                => OnClientMsgReceived( GetPacketMsg( clientMsg.Serialize(), this ) );
         }
     }
 }

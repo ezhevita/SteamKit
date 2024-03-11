@@ -1,12 +1,16 @@
 ﻿using System;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 using System.Text;
 
 namespace SteamKit2.Util.MacHelpers
 {
+#pragma warning disable CA2101 // Specify marshaling for P/Invoke string arguments. All the APIs in this file deal with regular UTF-8 strings (char *). With CharSet.Unicode, SK2 just crashes.
+
+    [SupportedOSPlatform( "macos" )]
     class CFTypeRef : SafeHandle
     {
-        CFTypeRef()
+        public CFTypeRef()
             : base(IntPtr.Zero, ownsHandle: true)
         {
         }
@@ -33,8 +37,9 @@ namespace SteamKit2.Util.MacHelpers
         }
     }
 
-    // Taken from <sys/mount.h>
-    struct statfs
+    // Taken from <sys/mount.h>, original name "statfs"
+    [SupportedOSPlatform( "macos" )]
+    struct StatFS
     {
         const int MFSTYPENAMELEN = 16;
         const int PATH_MAX = 1024;
@@ -67,14 +72,16 @@ namespace SteamKit2.Util.MacHelpers
         public uint[]  f_reserved;  /* For future use */
     }
 
+    [SupportedOSPlatform( "macos" )]
     static class LibC
     {
         const string LibraryName = "libc";
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-        public static extern int statfs64(string path, ref statfs buf);
+        public static extern int statfs64(string path, ref StatFS buf);
     }
 
+    [SupportedOSPlatform( "macos" )]
     static class CoreFoundation
     {
         const string LibraryName = "CoreFoundation.framework/CoreFoundation";
@@ -102,6 +109,7 @@ namespace SteamKit2.Util.MacHelpers
         public static extern CFTypeRef CFUUIDCreateString(CFTypeRef allocator, IntPtr uuid);
     }
 
+    [SupportedOSPlatform( "macos" )]
     static class DiskArbitration
     {
         const string LibraryName = "DiskArbitration.framework/DiskArbitration";
@@ -117,6 +125,7 @@ namespace SteamKit2.Util.MacHelpers
         public static extern CFTypeRef DADiskCopyDescription(CFTypeRef disk);
     }
 
+    [SupportedOSPlatform( "macos" )]
     static class IOKit
     {
         const string LibraryName = "IOKit.framework/IOKit";
@@ -136,5 +145,6 @@ namespace SteamKit2.Util.MacHelpers
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         public static extern int IOObjectRelease(uint @object);
     }
+#pragma warning restore CA2101 // Specify marshaling for P/Invoke string arguments
 }
 

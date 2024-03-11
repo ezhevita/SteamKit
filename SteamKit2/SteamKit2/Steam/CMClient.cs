@@ -6,8 +6,7 @@
 
 
 using System;
-using System.Collections.Generic;
-using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -22,7 +21,7 @@ namespace SteamKit2.Internal
     /// <summary>
     /// This base client handles the underlying connection to a CM server. This class should not be use directly, but through the <see cref="SteamClient"/> class.
     /// </summary>
-    public abstract class CMClient
+    public abstract class CMClient : ILogContext
     {
         /// <summary>
         /// The configuration for this client.
@@ -30,29 +29,40 @@ namespace SteamKit2.Internal
         public SteamConfiguration Configuration { get; }
 
         /// <summary>
+        /// A unique identifier for this client instance.
+        /// </summary>
+        public string ID { get; }
+
+        /// <summary>
         /// Bootstrap list of CM servers.
         /// </summary>
         public SmartCMServerList Servers => Configuration.ServerList;
 
         /// <summary>
-        /// Returns the the local IP of this client.
+        /// Returns the local IP of this client.
         /// </summary>
         /// <returns>The local IP.</returns>
-        public IPAddress LocalIP => connection?.GetLocalIP();
+        public IPAddress? LocalIP => connection?.GetLocalIP();
+
+        /// <summary>
+        /// Returns the current endpoint this client is connected to.
+        /// </summary>
+        /// <returns>The current endpoint.</returns>
+        public EndPoint? CurrentEndPoint => connection?.CurrentEndPoint;
 
         /// <summary>
         /// Gets the public IP address of this client. This value is assigned after a logon attempt has succeeded.
         /// This value will be <c>null</c> if the client is logged off of Steam.
         /// </summary>
         /// <value>The SteamID.</value>
-        public IPAddress PublicIP { get; private set; }
+        public IPAddress? PublicIP { get; private set; }
 
         /// <summary>
         /// Gets the country code of our public IP address according to Steam. This value is assigned after a logon attempt has succeeded.
         /// This value will be <c>null</c> if the client is logged off of Steam.
         /// </summary>
         /// <value>The SteamID.</value>
-        public string IPCountryCode { get; private set; }
+        public string? IPCountryCode { get; private set; }
 
         /// <summary>
         /// Gets the universe of this client.
@@ -90,7 +100,7 @@ namespace SteamKit2.Internal
         /// This value will be <c>null</c> if the client is logged off of Steam.
         /// </summary>
         /// <value>The SteamID.</value>
-        public SteamID SteamID { get; private set; }
+        public SteamID? SteamID { get; private set; }
 
         /// <summary>
         /// Gets or sets the connection timeout used when connecting to the Steam server.
@@ -104,29 +114,33 @@ namespace SteamKit2.Internal
         /// Gets or sets the network listening interface. Use this for debugging only.
         /// For your convenience, you can use <see cref="NetHookNetworkListener"/> class.
         /// </summary>
-        public IDebugNetworkListener DebugNetworkListener { get; set; }
+        public IDebugNetworkListener? DebugNetworkListener { get; set; }
 
         internal bool ExpectDisconnection { get; set; }
 
         // connection lock around the setup and tear down of the connection task
-        object connectionLock = new object();
-        CancellationTokenSource connectionCancellation;
-        Task connectionSetupTask;
-        volatile IConnection connection;
+        object connectionLock = new();
+        CancellationTokenSource? connectionCancellation;
+        Task? connectionSetupTask;
+        volatile IConnection? connection;
 
         ScheduledFunction heartBeatFunc;
-
-        Dictionary<EServerType, HashSet<IPEndPoint>> serverMap;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="CMClient"/> class with a specific configuration.
         /// </summary>
         /// <param name="configuration">The configuration to use for this client.</param>
-        /// <exception cref="ArgumentNullException">The configuration object is <c>null</c></exception>
-        public CMClient( SteamConfiguration configuration )
+        /// <param name="identifier">A specific identifier to be used to uniquely identify this instance.</param>
+        /// <exception cref="ArgumentNullException">The configuration object or identifier is <c>null</c></exception>
+        /// <exception cref="ArgumentException">The identifier is an empty string</exception>
+        public CMClient( SteamConfiguration configuration, string identifier )
         {
-            Configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
-            serverMap = new Dictionary<EServerType, HashSet<IPEndPoint>>();
+            Configuration = configuration ?? throw new ArgumentNullException( nameof( configuration ) );
+
+            ArgumentNullException.ThrowIfNull( identifier );
+            if ( identifier.Length == 0 ) throw new ArgumentException( "Identifer must not be empty.", nameof( identifier ) );
+
+            ID = identifier;
 
             heartBeatFunc = new ScheduledFunction( () =>
             {
@@ -150,21 +164,21 @@ namespace SteamKit2.Internal
         /// <param name="proxy">
         /// The proxy server that should be used to connect to CM server (only WebSocketConnection is supported).
         /// </param>
-        public void Connect( ServerRecord cmServer = null, WebProxy proxy = null )
+        public void Connect( ServerRecord? cmServer = null, WebProxy? proxy = null )
         {
             lock ( connectionLock )
             {
-                this.Disconnect();
-                Debug.Assert( connection == null );
-
-                Debug.Assert( connectionCancellation == null );
+                Disconnect( userInitiated: true );
+                DebugLog.Assert( connection == null, nameof( CMClient ), "Connection is not null" );
+                DebugLog.Assert( connectionSetupTask == null, nameof( CMClient ), "Connection setup task is not null" );
+                DebugLog.Assert( connectionCancellation == null, nameof( CMClient ), "Connection cancellation token is not null" );
 
                 connectionCancellation = new CancellationTokenSource();
                 var token = connectionCancellation.Token;
 
                 ExpectDisconnection = false;
 
-                Task<ServerRecord> recordTask = null;
+                Task<ServerRecord?> recordTask;
 
                 if ( cmServer == null )
                 {
@@ -172,47 +186,60 @@ namespace SteamKit2.Internal
                 }
                 else
                 {
-                    recordTask = Task.FromResult( cmServer );
+                    recordTask = Task.FromResult( ( ServerRecord? )cmServer );
                 }
 
                 connectionSetupTask = recordTask.ContinueWith( t =>
                 {
                     if ( token.IsCancellationRequested )
                     {
-                        DebugLog.WriteLine( nameof( CMClient ), "Connection cancelled before a server could be chosen." );
+                        LogDebug( nameof( CMClient ), "Connection cancelled before a server could be chosen." );
                         OnClientDisconnected( userInitiated: true );
                         return;
                     }
                     else if ( t.IsFaulted || t.IsCanceled )
                     {
-                        DebugLog.WriteLine( nameof( CMClient ), "Server record task threw exception: {0}", t.Exception );
+                        LogDebug( nameof( CMClient ), "Server record task threw exception: {0}", t.Exception );
                         OnClientDisconnected( userInitiated: false );
                         return;
                     }
 
                     var record = t.Result;
 
-                    connection = CreateConnection( record.ProtocolTypes & Configuration.ProtocolTypes );
-                    connection.NetMsgReceived += NetMsgReceived;
-                    connection.Connected += Connected;
-                    connection.Disconnected += Disconnected;
+                    if ( record is null )
+                    {
+                        LogDebug( nameof( CMClient ), "Server record task returned no result." );
+                        OnClientDisconnected( userInitiated: false );
+                        return;
+                    }
+
+                    var newConnection = CreateConnection( record.ProtocolTypes & Configuration.ProtocolTypes );
+
+                    var connectionRelease = Interlocked.Exchange( ref connection, newConnection );
+                    DebugLog.Assert( connectionRelease == null, nameof( CMClient ), "Connection was set during a connect, did you call CMClient.Connect() on multiple threads?" );
+
+                    newConnection.NetMsgReceived += NetMsgReceived;
+                    newConnection.Connected += Connected;
+                    newConnection.Disconnected += Disconnected;
 
                     IWebProxy webProxy = proxy ?? Configuration.WebProxy;
                     if ( ( webProxy != null ) && connection is WebSocketConnection socketConnection)
                     {
-                        socketConnection.Connect(record.EndPoint, webProxy, (int) ConnectionTimeout.TotalMilliseconds);
+                        socketConnection.Connect( record.EndPoint, webProxy, ( int )ConnectionTimeout.TotalMilliseconds );
                     }
                     else
                     {
-                        connection.Connect(record.EndPoint, (int) ConnectionTimeout.TotalMilliseconds);
+                        newConnection.Connect( record.EndPoint, ( int )ConnectionTimeout.TotalMilliseconds );
                     }
                 }, TaskContinuationOptions.ExecuteSynchronously ).ContinueWith( t =>
                 {
                     if ( t.IsFaulted )
                     {
-                        DebugLog.WriteLine( nameof( CMClient ), "Unhandled exception when attempting to connect to Steam: {0}", t.Exception );
+                        LogDebug( nameof( CMClient ), "Unhandled exception when attempting to connect to Steam: {0}", t.Exception );
                         OnClientDisconnected( userInitiated: false );
                     }
+
+                    connectionSetupTask = null;
                 }, TaskContinuationOptions.ExecuteSynchronously );
             }
         }
@@ -220,9 +247,9 @@ namespace SteamKit2.Internal
         /// <summary>
         /// Disconnects this client.
         /// </summary>
-        public void Disconnect() => Disconnect( userInitiated: true ); 
+        public void Disconnect() => Disconnect( userInitiated: true );
 
-        void Disconnect( bool userInitiated)
+        private protected void Disconnect( bool userInitiated )
         {
             lock ( connectionLock )
             {
@@ -235,16 +262,14 @@ namespace SteamKit2.Internal
                     connectionCancellation = null;
                 }
 
-                if ( connectionSetupTask != null )
-                {
-                    // though it's ugly, we want to wait for the completion of this task and keep hold of the lock
-                    connectionSetupTask.GetAwaiter().GetResult();
-                    connectionSetupTask = null;
-                }
+                var connectionSetupTaskToWait = Interlocked.Exchange( ref connectionSetupTask, null );
+
+                // though it's ugly, we want to wait for the completion of this task and keep hold of the lock
+                connectionSetupTaskToWait?.GetAwaiter().GetResult();
 
                 // Connection implementations are required to issue the Disconnected callback before Disconnect() returns
                 connection?.Disconnect( userInitiated );
-                Debug.Assert( connection == null );
+                DebugLog.Assert( connection == null, nameof( CMClient ), "Connection was not released in disconnect." );
             }
         }
 
@@ -257,28 +282,34 @@ namespace SteamKit2.Internal
         {
             if ( msg == null )
             {
-                throw new ArgumentNullException( nameof(msg), "A value for 'msg' must be supplied" );
+                throw new ArgumentNullException( nameof( msg ), "A value for 'msg' must be supplied" );
             }
 
-            if ( this.SessionID.HasValue )
+            DebugLog.Assert( IsConnected, nameof( CMClient ), "Send() was called while not connected to Steam." );
+
+            var sessionID = this.SessionID;
+
+            if ( sessionID.HasValue )
             {
-                msg.SessionID = this.SessionID.Value;
+                msg.SessionID = sessionID.Value;
             }
 
-            if ( this.SteamID != null )
+            var steamID = this.SteamID;
+
+            if ( steamID != null )
             {
-                msg.SteamID = this.SteamID;
+                msg.SteamID = steamID;
             }
 
-            DebugLog.WriteLine( "CMClient", "Sent -> EMsg: {0} (Proto: {1})", msg.MsgType, msg.IsProto );
+            var serialized = msg.Serialize();
 
             try
             {
-                DebugNetworkListener?.OnOutgoingNetworkMessage(msg.MsgType, msg.Serialize());
+                DebugNetworkListener?.OnOutgoingNetworkMessage( msg.MsgType, serialized );
             }
             catch ( Exception e )
             {
-                DebugLog.WriteLine( "CMClient", "DebugNetworkListener threw an exception: {0}", e );
+                LogDebug( "CMClient", "DebugNetworkListener threw an exception: {0}", e );
             }
 
             // we'll swallow any network failures here because they will be thrown later
@@ -287,7 +318,7 @@ namespace SteamKit2.Internal
 
             try
             {
-                connection?.Send( msg.Serialize() );
+                connection?.Send( serialized );
             }
             catch ( IOException )
             {
@@ -297,18 +328,21 @@ namespace SteamKit2.Internal
             }
         }
 
-
         /// <summary>
-        /// Returns the list of servers matching the given type
+        /// Writes a line to the debug log, informing all listeners.
         /// </summary>
-        /// <param name="type">Server type requested</param>
-        /// <returns>List of server endpoints</returns>
-        public List<IPEndPoint> GetServersOfType( EServerType type )
+        /// <param name="category">The category of the message.</param>
+        /// <param name="message">A composite format string.</param>
+        /// <param name="args">An array containing zero or more objects to format.</param>
+        public void LogDebug( string category, string message, params object?[]? args )
         {
-            if ( !serverMap.TryGetValue( type, out var set ) )
-                return new List<IPEndPoint>();
+            if ( !DebugLog.Enabled )
+            {
+                return;
+            }
 
-            return set.ToList();
+            var fullCategory = string.Concat( ID, "/", category );
+            DebugLog.WriteLine( fullCategory, message, args );
         }
 
 
@@ -316,16 +350,14 @@ namespace SteamKit2.Internal
         /// Called when a client message is received from the network.
         /// </summary>
         /// <param name="packetMsg">The packet message.</param>
-        protected virtual bool OnClientMsgReceived( IPacketMsg packetMsg )
+        protected virtual bool OnClientMsgReceived( [NotNullWhen( true )] IPacketMsg? packetMsg )
         {
             if ( packetMsg == null )
             {
-                DebugLog.WriteLine( "CMClient", "Packet message failed to parse, shutting down connection" );
-                Disconnect();
+                LogDebug( "CMClient", "Packet message failed to parse, shutting down connection" );
+                Disconnect( userInitiated: false );
                 return false;
             }
-
-            DebugLog.WriteLine( "CMClient", "<- Recv'd EMsg: {0} ({1}) (Proto: {2})", packetMsg.MsgType, ( int )packetMsg.MsgType, packetMsg.IsProto );
 
             // Multi message gets logged down the line after it's decompressed
             if ( packetMsg.MsgType != EMsg.Multi )
@@ -336,7 +368,7 @@ namespace SteamKit2.Internal
                 }
                 catch ( Exception e )
                 {
-                    DebugLog.WriteLine( "CMClient", "DebugNetworkListener threw an exception: {0}", e );
+                    LogDebug( "CMClient", "DebugNetworkListener threw an exception: {0}", e );
                 }
             }
 
@@ -354,8 +386,8 @@ namespace SteamKit2.Internal
                     HandleLoggedOff( packetMsg );
                     break;
 
-                case EMsg.ClientServerList: // Steam server list
-                    HandleServerList( packetMsg );
+                case EMsg.ClientServerUnavailable:
+                    HandleServerUnavailable( packetMsg );
                     break;
 
                 case EMsg.ClientCMList:
@@ -374,60 +406,67 @@ namespace SteamKit2.Internal
         /// </summary>
         protected virtual void OnClientConnected()
         {
+            var request = new ClientMsgProtobuf<CMsgClientHello>( EMsg.ClientHello );
+            request.Body.protocol_version = MsgClientLogon.CurrentProtocol;
+
+            Send( request );
         }
         /// <summary>
         /// Called when the client is physically disconnected from Steam3.
         /// </summary>
         protected virtual void OnClientDisconnected( bool userInitiated )
         {
-            foreach ( var set in serverMap.Values )
-            {
-                set.Clear();
-            }
         }
 
         IConnection CreateConnection( ProtocolTypes protocol )
         {
             if ( protocol.HasFlagsFast( ProtocolTypes.WebSocket ) )
             {
-                return new WebSocketConnection();
+                return new WebSocketConnection( this );
             }
             else if ( protocol.HasFlagsFast( ProtocolTypes.Tcp ) )
             {
-                return new EnvelopeEncryptedConnection( new TcpConnection(), Universe );
+                return new EnvelopeEncryptedConnection( new TcpConnection( this ), Universe, this, DebugNetworkListener );
             }
             else if ( protocol.HasFlagsFast( ProtocolTypes.Udp ) )
             {
-                return new EnvelopeEncryptedConnection( new UdpConnection(), Universe );
+                return new EnvelopeEncryptedConnection( new UdpConnection( this ), Universe, this, DebugNetworkListener );
             }
 
-            throw new ArgumentOutOfRangeException( nameof(protocol), protocol, "Protocol bitmask has no supported protocols set." );
+            throw new ArgumentOutOfRangeException( nameof( protocol ), protocol, "Protocol bitmask has no supported protocols set." );
         }
 
 
-        void NetMsgReceived( object sender, NetMsgEventArgs e )
+        void NetMsgReceived( object? sender, NetMsgEventArgs e )
         {
-            OnClientMsgReceived( GetPacketMsg( e.Data ) );
+            OnClientMsgReceived( GetPacketMsg( e.Data, this ) );
         }
 
-        void Connected( object sender, EventArgs e )
+        void Connected( object? sender, EventArgs e )
         {
+            DebugLog.Assert( connection != null, nameof( CMClient ), "No connection object after connecting." );
+            DebugLog.Assert( connection.CurrentEndPoint != null, nameof( CMClient ), "No connection endpoint after connecting - cannot update server list" );
+
             Servers.TryMark( connection.CurrentEndPoint, connection.ProtocolTypes, ServerQuality.Good );
 
             IsConnected = true;
             OnClientConnected();
         }
 
-        void Disconnected( object sender, DisconnectedEventArgs e )
+        void Disconnected( object? sender, DisconnectedEventArgs e )
         {
             var connectionRelease = Interlocked.Exchange( ref connection, null );
-            if ( connectionRelease == null ) return;
+            if ( connectionRelease == null )
+            {
+                return;
+            }
 
             IsConnected = false;
 
             if ( !e.UserInitiated && !ExpectDisconnection )
             {
-                Servers.TryMark( connectionRelease.CurrentEndPoint, connectionRelease.ProtocolTypes, ServerQuality.Bad );
+                DebugLog.Assert( connectionRelease.CurrentEndPoint != null, nameof( CMClient ), "No connection endpoint while disconnecting - cannot update server list" );
+                Servers.TryMark( connectionRelease.CurrentEndPoint!, connectionRelease.ProtocolTypes, ServerQuality.Bad );
             }
 
             SessionID = null;
@@ -442,11 +481,11 @@ namespace SteamKit2.Internal
             OnClientDisconnected( userInitiated: e.UserInitiated || ExpectDisconnection );
         }
 
-        internal static IPacketMsg GetPacketMsg( byte[] data )
+        internal static IPacketMsg? GetPacketMsg( byte[] data, ILogContext log )
         {
             if ( data.Length < sizeof( uint ) )
             {
-                DebugLog.WriteLine( nameof(CMClient), "PacketMsg too small to contain a message, was only {0} bytes. Message: 0x{1}", data.Length, BitConverter.ToString( data ).Replace( "-", string.Empty ) );
+                log.LogDebug( nameof( CMClient ), "PacketMsg too small to contain a message, was only {0} bytes. Message: 0x{1}", data.Length, BitConverter.ToString( data ).Replace( "-", string.Empty ) );
                 return null;
             }
 
@@ -464,20 +503,20 @@ namespace SteamKit2.Internal
 
             try
             {
-                if (MsgUtil.IsProtoBuf(rawEMsg))
+                if ( MsgUtil.IsProtoBuf( rawEMsg ) )
                 {
                     // if the emsg is flagged, we're a proto message
-                    return new PacketClientMsgProtobuf(eMsg, data);
+                    return new PacketClientMsgProtobuf( eMsg, data );
                 }
                 else
                 {
                     // otherwise we're a struct message
-                    return new PacketClientMsg(eMsg, data);
+                    return new PacketClientMsg( eMsg, data );
                 }
             }
-            catch (Exception ex)
+            catch ( Exception ex )
             {
-                DebugLog.WriteLine( "CMClient", "Exception deserializing emsg {0} ({1}).\n{2}", eMsg, MsgUtil.IsProtoBuf( rawEMsg ), ex.ToString() );
+                log.LogDebug( "CMClient", "Exception deserializing emsg {0} ({1}).\n{2}", eMsg, MsgUtil.IsProtoBuf( rawEMsg ), ex.ToString() );
                 return null;
             }
         }
@@ -488,7 +527,7 @@ namespace SteamKit2.Internal
         {
             if ( !packetMsg.IsProto )
             {
-                DebugLog.WriteLine( "CMClient", "HandleMulti got non-proto MsgMulti!!" );
+                LogDebug( "CMClient", "HandleMulti got non-proto MsgMulti!!" );
                 return;
             }
 
@@ -500,33 +539,29 @@ namespace SteamKit2.Internal
             {
                 try
                 {
-                    using ( var compressedStream = new MemoryStream( payload ) )
-                    using ( var gzipStream = new GZipStream( compressedStream, CompressionMode.Decompress ) )
-                    using ( var decompressedStream = new MemoryStream() )
-                    {
-                        gzipStream.CopyTo( decompressedStream );
-                        payload = decompressedStream.ToArray();
-                    }
+                    using var compressedStream = new MemoryStream( payload );
+                    using var gzipStream = new GZipStream( compressedStream, CompressionMode.Decompress );
+                    using var decompressedStream = new MemoryStream();
+                    gzipStream.CopyTo( decompressedStream );
+                    payload = decompressedStream.ToArray();
                 }
                 catch ( Exception ex )
                 {
-                    DebugLog.WriteLine( "CMClient", "HandleMulti encountered an exception when decompressing.\n{0}", ex.ToString() );
+                    LogDebug( "CMClient", "HandleMulti encountered an exception when decompressing.\n{0}", ex.ToString() );
                     return;
                 }
             }
 
-            using ( var ms = new MemoryStream( payload ) )
-            using ( var br = new BinaryReader( ms ) )
+            using var ms = new MemoryStream( payload );
+            using var br = new BinaryReader( ms );
+            while ( ( ms.Length - ms.Position ) != 0 )
             {
-                while ( ( ms.Length - ms.Position ) != 0 )
-                {
-                    int subSize = br.ReadInt32();
-                    byte[] subData = br.ReadBytes( subSize );
+                int subSize = br.ReadInt32();
+                byte[] subData = br.ReadBytes( subSize );
 
-                    if ( !OnClientMsgReceived( GetPacketMsg( subData ) ) )
-                    {
-                        break;
-                    }
+                if ( !OnClientMsgReceived( GetPacketMsg( subData, this ) ) )
+                {
+                    break;
                 }
             }
 
@@ -537,27 +572,35 @@ namespace SteamKit2.Internal
             {
                 // a non proto ClientLogonResponse can come in as a result of connecting but never sending a ClientLogon
                 // in this case, it always fails, so we don't need to do anything special here
-                DebugLog.WriteLine( "CMClient", "Got non-proto logon response, this is indicative of no logon attempt after connecting." );
+                LogDebug( "CMClient", "Got non-proto logon response, this is indicative of no logon attempt after connecting." );
                 return;
             }
 
             var logonResp = new ClientMsgProtobuf<CMsgClientLogonResponse>( packetMsg );
+            var logonResult = ( EResult )logonResp.Body.eresult;
 
-            if ( logonResp.Body.eresult == ( int )EResult.OK )
+            if ( logonResult == EResult.OK )
             {
                 SessionID = logonResp.ProtoHeader.client_sessionid;
                 SteamID = logonResp.ProtoHeader.steamid;
 
                 CellID = logonResp.Body.cell_id;
-                PublicIP = NetHelpers.GetIPAddress(logonResp.Body.public_ip);
+                PublicIP = logonResp.Body.public_ip.GetIPAddress();
                 IPCountryCode = logonResp.Body.ip_country_code;
 
-                int hbDelay = logonResp.Body.out_of_game_heartbeat_seconds;
+                int hbDelay = logonResp.Body.legacy_out_of_game_heartbeat_seconds;
 
                 // restart heartbeat
                 heartBeatFunc.Stop();
                 heartBeatFunc.Delay = TimeSpan.FromSeconds( hbDelay );
                 heartBeatFunc.Start();
+            }
+            else if ( logonResult == EResult.TryAnotherCM || logonResult == EResult.ServiceUnavailable )
+            {
+                if ( connection?.CurrentEndPoint != null )
+                {
+                    Servers.TryMark( connection.CurrentEndPoint, connection.ProtocolTypes, ServerQuality.Bad );
+                }
             }
         }
         void HandleLoggedOff( IPacketMsg packetMsg )
@@ -574,37 +617,33 @@ namespace SteamKit2.Internal
             if ( packetMsg.IsProto )
             {
                 var logoffMsg = new ClientMsgProtobuf<CMsgClientLoggedOff>( packetMsg );
-                var logoffResult = (EResult)logoffMsg.Body.eresult;
+                var logoffResult = ( EResult )logoffMsg.Body.eresult;
 
                 if ( logoffResult == EResult.TryAnotherCM || logoffResult == EResult.ServiceUnavailable )
                 {
+                    DebugLog.Assert( connection != null, nameof( CMClient ), "No connection object during ClientLoggedOff." );
+                    DebugLog.Assert( connection.CurrentEndPoint != null, nameof( CMClient ), "No connection endpoint during ClientLoggedOff - cannot update server list status" );
                     Servers.TryMark( connection.CurrentEndPoint, connection.ProtocolTypes, ServerQuality.Bad );
                 }
             }
         }
-        void HandleServerList( IPacketMsg packetMsg )
+
+        void HandleServerUnavailable( IPacketMsg packetMsg )
         {
-            var listMsg = new ClientMsgProtobuf<CMsgClientServerList>( packetMsg );
+            var msgServerUnavailable = new ClientMsg<MsgClientServerUnavailable>( packetMsg );
 
-            foreach ( var server in listMsg.Body.servers )
-            {
-                var type = ( EServerType )server.server_type;
-
-                if ( !serverMap.TryGetValue( type, out var endpointSet ) )
-                {
-                    serverMap[type] = endpointSet = new HashSet<IPEndPoint>();
-                }
-
-                endpointSet.Add( new IPEndPoint( NetHelpers.GetIPAddress( server.server_ip ), ( int )server.server_port ) );
-            }
+            LogDebug( "SteamClient", "A server of type '{0}' was not available for request: '{1}'",
+                msgServerUnavailable.Body.EServerTypeUnavailable, ( EMsg )msgServerUnavailable.Body.EMsgSent );
+            Disconnect( userInitiated: false );
         }
+
         void HandleCMList( IPacketMsg packetMsg )
         {
             var cmMsg = new ClientMsgProtobuf<CMsgClientCMList>( packetMsg );
             DebugLog.Assert( cmMsg.Body.cm_addresses.Count == cmMsg.Body.cm_ports.Count, "CMClient", "HandleCMList received malformed message" );
 
             var cmList = cmMsg.Body.cm_addresses
-                .Zip( cmMsg.Body.cm_ports, ( addr, port ) => ServerRecord.CreateSocketServer( new IPEndPoint( NetHelpers.GetIPAddress( addr ) , ( int )port ) ) );
+                .Zip( cmMsg.Body.cm_ports, ( addr, port ) => ServerRecord.CreateSocketServer( new IPEndPoint( NetHelpers.GetIPAddress( addr ), ( int )port ) ) );
 
             var webSocketList = cmMsg.Body.cm_websocket_addresses.Select( addr => ServerRecord.CreateWebSocketServer( addr ) );
 

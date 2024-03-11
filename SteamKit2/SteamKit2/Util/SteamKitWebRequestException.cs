@@ -12,7 +12,7 @@ namespace SteamKit2
         /// <summary>
         /// Represents the status code of the HTTP response.
         /// </summary>
-        public HttpStatusCode StatusCode { get; private set; }
+        public new HttpStatusCode StatusCode => base.StatusCode ?? default;
 
         /// <summary>
         /// Represents the collection of HTTP response headers.
@@ -25,9 +25,8 @@ namespace SteamKit2
         /// <param name="message">The message that describes the error.</param>
         /// <param name="response">HTTP response message including the status code and data.</param>
         public SteamKitWebRequestException(string message, HttpResponseMessage response)
-            : base(message)
+            : base(message, null, response.StatusCode)
         {
-            this.StatusCode = response.StatusCode;
             this.Headers = response.Headers;
         }
     }

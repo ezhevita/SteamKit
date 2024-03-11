@@ -5,6 +5,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Text;
 
@@ -19,9 +20,9 @@ namespace SteamKit2
         {
             public sealed class Chunk
             {
-                public byte[] ChunkGID { get; set; } // sha1 hash for this chunk
+                public byte[]? ChunkGID { get; set; } // sha1 hash for this chunk
 
-                public byte[] Checksum { get; set; }
+                public byte[]? Checksum { get; set; }
                 public ulong Offset { get; set; }
 
                 public uint DecompressedSize { get; set; }
@@ -41,16 +42,16 @@ namespace SteamKit2
                 }
             }
 
-            public string FileName { get; set; }
+            public string? FileName { get; set; }
 
             public ulong TotalSize { get; set; }
             public EDepotFileFlag Flags { get; set; }
 
-            public byte[] HashFileName { get; set; }
-            public byte[] HashContent { get; set; }
+            public byte[]? HashFileName { get; set; }
+            public byte[]? HashContent { get; set; }
 
             public uint NumChunks { get; set; }
-            public Chunk[] Chunks { get; private set; }
+            public Chunk[]? Chunks { get; private set; }
 
             public FileMapping()
             {
@@ -106,19 +107,12 @@ namespace SteamKit2
 
         public uint Flags { get; set; }
 
-        public List<FileMapping> Mapping { get; private set; }
-
-
-        private Steam3Manifest()
-        {
-        }
+        [NotNull]
+        public List<FileMapping>? Mapping { get; private set; }
 
         public Steam3Manifest(byte[] data)
         {
-            if (data == null)
-            {
-                throw new ArgumentNullException(nameof(data));
-            }
+            ArgumentNullException.ThrowIfNull( data );
 
             Deserialize(data);
         }
@@ -130,11 +124,9 @@ namespace SteamKit2
 
         void Deserialize(byte[] data)
         {
-            using ( var ms = new MemoryStream( data ) )
-            using ( var br = new BinaryReader( ms ) )
-            {
-                Deserialize( br );
-            }
+            using var ms = new MemoryStream( data );
+            using var br = new BinaryReader( ms );
+            Deserialize( br );
         }
 
         void Deserialize( BinaryReader ds )

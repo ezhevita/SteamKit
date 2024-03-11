@@ -40,10 +40,7 @@ namespace SteamKit2
         /// <returns>A configuration object.</returns>
         public static SteamConfiguration Create(Action<ISteamConfigurationBuilder> configurator)
         {
-            if (configurator == null)
-            {
-                throw new ArgumentNullException(nameof(configurator));
-            }
+            ArgumentNullException.ThrowIfNull( configurator );
 
             var builder = new SteamConfigurationBuilder();
             configurator(builder);
@@ -51,7 +48,7 @@ namespace SteamKit2
         }
 
         internal static SteamConfiguration CreateDefault()
-            => new SteamConfiguration(SteamConfigurationBuilder.CreateDefaultState());
+            => new(SteamConfigurationBuilder.CreateDefaultState());
 
         readonly SteamConfigurationState state;
 
@@ -80,6 +77,12 @@ namespace SteamKit2
         /// Factory function to create a user-configured HttpClient.
         /// </summary>
         public HttpClientFactory HttpClientFactory => state.HttpClientFactory;
+
+        /// <summary>
+        /// The machine info provider to be used during the login process. This can be substituted with a custom implementation
+        /// when running SteamKit2 in new and novel environments that do not have an appropriate default implementation.
+        /// </summary>
+        public IMachineInfoProvider MachineInfoProvider => state.MachineInfoProvider;
 
         /// <summary>
         /// The supported protocol types to use when attempting to connect to Steam.

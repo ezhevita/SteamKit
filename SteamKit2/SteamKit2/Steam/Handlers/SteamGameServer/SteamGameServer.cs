@@ -24,7 +24,7 @@ namespace SteamKit2
             /// <summary>
             /// Gets or sets the authentication token used to log in as a game server.
             /// </summary>
-            public string Token { get; set; }
+            public string? Token { get; set; }
 
             /// <summary>
             /// Gets or sets the AppID this gameserver will serve.
@@ -50,12 +50,12 @@ namespace SteamKit2
             /// <summary>
             /// Gets or sets the directory the game data is in.
             /// </summary>
-            public string GameDirectory { get; set; }
+            public string? GameDirectory { get; set; }
 
             /// <summary>
             /// Gets or sets the IP address the game server listens on.
             /// </summary>
-            public IPAddress Address { get; set; }
+            public IPAddress? Address { get; set; }
 
             /// <summary>
             /// Gets or sets the port the game server listens on.
@@ -70,7 +70,7 @@ namespace SteamKit2
             /// <summary>
             /// Gets or sets the current version of the game server.
             /// </summary>
-            public string Version { get; set; }
+            public string? Version { get; set; }
         }
 
 
@@ -96,10 +96,7 @@ namespace SteamKit2
         /// <exception cref="System.ArgumentException">Username or password are not set within <paramref name="details"/>.</exception>
         public void LogOn( LogOnDetails details )
         {
-            if ( details == null )
-            {
-                throw new ArgumentNullException( "details" );
-            }
+            ArgumentNullException.ThrowIfNull( details );
 
             if ( string.IsNullOrEmpty( details.Token ) )
             {
@@ -119,14 +116,13 @@ namespace SteamKit2
             logon.ProtoHeader.client_sessionid = 0;
             logon.ProtoHeader.steamid = gsId.ConvertToUInt64();
 
-            uint localIp = NetHelpers.GetIPAddress( this.Client.LocalIP );
-            logon.Body.obfustucated_private_ip = localIp ^ MsgClientLogon.ObfuscationMask;
+            logon.Body.obfuscated_private_ip = NetHelpers.GetMsgIPAddress( this.Client.LocalIP! ).ObfuscatePrivateIP();
 
             logon.Body.protocol_version = MsgClientLogon.CurrentProtocol;
 
             logon.Body.client_os_type = ( uint )Utils.GetOSType();
             logon.Body.game_server_app_id = ( int )details.AppID;
-            logon.Body.machine_id = HardwareUtils.GetMachineID();
+            logon.Body.machine_id = HardwareUtils.GetMachineID( Client.Configuration.MachineInfoProvider );
 
             logon.Body.game_server_token = details.Token;
 
@@ -154,14 +150,13 @@ namespace SteamKit2
             logon.ProtoHeader.client_sessionid = 0;
             logon.ProtoHeader.steamid = gsId.ConvertToUInt64();
 
-            uint localIp = NetHelpers.GetIPAddress( this.Client.LocalIP );
-            logon.Body.obfustucated_private_ip = localIp ^ MsgClientLogon.ObfuscationMask;
+            logon.Body.obfuscated_private_ip = NetHelpers.GetMsgIPAddress( this.Client.LocalIP! ).ObfuscatePrivateIP();
 
             logon.Body.protocol_version = MsgClientLogon.CurrentProtocol;
 
             logon.Body.client_os_type = ( uint )Utils.GetOSType();
             logon.Body.game_server_app_id = ( int )appId;
-            logon.Body.machine_id = HardwareUtils.GetMachineID();
+            logon.Body.machine_id = HardwareUtils.GetMachineID( Client.Configuration.MachineInfoProvider );
 
             this.Client.Send( logon );
         }
@@ -185,10 +180,7 @@ namespace SteamKit2
         /// <param name="details">A <see cref="SteamGameServer.StatusDetails"/> object containing the server's status.</param>
         public void SendStatus(StatusDetails details)
         {
-            if (details == null)
-            {
-                throw new ArgumentNullException( nameof(details) );
-            }
+            ArgumentNullException.ThrowIfNull( details );
 
             if (details.Address != null && details.Address.AddressFamily != AddressFamily.InterNetwork)
             {
@@ -205,7 +197,7 @@ namespace SteamKit2
 
             if (details.Address != null)
             {
-                status.Body.game_ip_address = NetHelpers.GetIPAddress( details.Address );
+                status.Body.deprecated_game_ip_address = NetHelpers.GetIPAddressAsUInt( details.Address );
             }
 
             this.Client.Send( status );
@@ -217,14 +209,9 @@ namespace SteamKit2
         /// <param name="packetMsg">The packet message that contains the data.</param>
         public override void HandleMsg( IPacketMsg packetMsg )
         {
-            if ( packetMsg == null )
-            {
-                throw new ArgumentNullException( nameof(packetMsg) );
-            }
+            ArgumentNullException.ThrowIfNull( packetMsg );
 
-            bool haveFunc = dispatchMap.TryGetValue( packetMsg.MsgType, out var handlerFunc );
-
-            if ( !haveFunc )
+            if ( !dispatchMap.TryGetValue( packetMsg.MsgType, out var handlerFunc ) )
             {
                 // ignore messages that we don't have a handler function for
                 return;

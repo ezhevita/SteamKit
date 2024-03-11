@@ -8,6 +8,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text.RegularExpressions;
 
@@ -33,23 +34,20 @@ namespace SteamKit2
     /// This 64-bit structure is used for identifying various objects on the Steam network.
     /// </summary>
     [DebuggerDisplay( "{Render()}, {ConvertToUInt64()}" )]
-    public class SteamID
+    public partial class SteamID
     {
         readonly BitVector64 steamid;
 
-        static readonly Regex Steam2Regex = new Regex(
-            @"STEAM_(?<universe>[0-4]):(?<authserver>[0-1]):(?<accountid>\d+)",
-            RegexOptions.Compiled | RegexOptions.IgnoreCase );
+        [GeneratedRegex( @"STEAM_(?<universe>[0-4]):(?<authserver>[0-1]):(?<accountid>[0-9]+)", RegexOptions.IgnoreCase )]
+        private static partial Regex Steam2Regex();
 
-        static readonly Regex Steam3Regex = new Regex(
-            @"\[(?<type>[AGMPCgcLTIUai]):(?<universe>[0-4]):(?<account>\d+)(:(?<instance>\d+))?\]",
-            RegexOptions.Compiled );
+        [GeneratedRegex( @"\[(?<type>[AGMPCgcLTIUai]):(?<universe>[0-4]):(?<account>[0-9]+)(:(?<instance>[0-9]+))?\]" )]
+        private static partial Regex Steam3Regex();
 
-        static readonly Regex Steam3FallbackRegex = new Regex(
-            @"\[(?<type>[AGMPCgcLTIUai]):(?<universe>[0-4]):(?<account>\d+)(\((?<instance>\d+)\))?\]",
-            RegexOptions.Compiled );
+        [GeneratedRegex( @"\[(?<type>[AGMPCgcLTIUai]):(?<universe>[0-4]):(?<account>[0-9]+)(\((?<instance>[0-9]+)\))?\]" )]
+        private static partial Regex Steam3FallbackRegex();
 
-        static readonly Dictionary<EAccountType, char> AccountTypeChars = new Dictionary<EAccountType, char>
+        static readonly Dictionary<EAccountType, char> AccountTypeChars = new()
         {
             { EAccountType.AnonGameServer, 'A' },
             { EAccountType.GameServer, 'G' },
@@ -221,7 +219,7 @@ namespace SteamKit2
                 return false;
             }
 
-            Match m = Steam2Regex.Match( steamId );
+            Match m = Steam2Regex().Match( steamId );
 
             if ( !m.Success )
             {
@@ -254,11 +252,11 @@ namespace SteamKit2
                 return false;
             }
 
-            Match m = Steam3Regex.Match( steamId );
+            Match m = Steam3Regex().Match( steamId );
 
             if ( !m.Success )
             {
-                m = Steam3FallbackRegex.Match( steamId );
+                m = Steam3FallbackRegex().Match( steamId );
 
                 if ( !m.Success )
                 {
@@ -292,19 +290,11 @@ namespace SteamKit2
             }
             else
             {
-                switch ( type )
+                instance = type switch
                 {
-                    case 'g':
-                    case 'T':
-                    case 'c':
-                    case 'L':
-                        instance = 0;
-                        break;
-
-                    default:
-                        instance = 1;
-                        break;
-                }
+                    'g' or 'T' or 'c' or 'L' => 0,
+                    _ => 1,
+                };
             }
 
             if ( type == 'c' )
@@ -458,10 +448,10 @@ namespace SteamKit2
         {
             get
             {
-                if ( this.AccountType <= EAccountType.Invalid || this.AccountType >= EAccountType.Max )
+                if ( this.AccountType <= EAccountType.Invalid || this.AccountType > EAccountType.AnonUser )
                     return false;
 
-                if ( this.AccountUniverse <= EUniverse.Invalid || this.AccountUniverse >= EUniverse.Max )
+                if ( this.AccountUniverse <= EUniverse.Invalid || this.AccountUniverse > EUniverse.Dev )
                     return false;
 
                 if ( this.AccountType == EAccountType.Individual )
@@ -572,7 +562,7 @@ namespace SteamKit2
         /// </summary>
         /// <returns><c>true</c> if this chat ID represents a group chat, <c>false</c> otherwise.</returns>\
         /// <param name="groupID">If the method returned <c>true</c>, then this is the group that this chat is associated with. Otherwise, this is <c>null</c>.</param>
-        public bool TryGetClanID( out SteamID groupID )
+        public bool TryGetClanID( [NotNullWhen(true)] out SteamID? groupID )
         {
             if ( IsChatAccount && AccountInstance == (uint)ChatInstanceFlags.Clan )
             {
@@ -583,7 +573,7 @@ namespace SteamKit2
             }
             else
             {
-                groupID = default( SteamID );
+                groupID = default;
                 return false;
             }
         }
@@ -659,10 +649,7 @@ namespace SteamKit2
         /// </returns>
         public static implicit operator ulong( SteamID sid )
         {
-            if ( sid == null )
-            {
-                throw new ArgumentNullException( nameof(sid) );
-            }
+            ArgumentNullException.ThrowIfNull( sid );
 
             return sid.steamid.Data;
         }
@@ -674,7 +661,7 @@ namespace SteamKit2
         /// <returns>
         /// The result of the conversion.
         /// </returns>
-        public static implicit operator SteamID( ulong id ) => new SteamID( id );
+        public static implicit operator SteamID( ulong id ) => new( id );
 
         /// <summary>
         /// Determines whether the specified <see cref="object"/> is equal to this instance.
@@ -683,14 +670,14 @@ namespace SteamKit2
         /// <returns>
         ///   <c>true</c> if the specified <see cref="object"/> is equal to this instance; otherwise, <c>false</c>.
         /// </returns>
-        public override bool Equals( object obj )
+        public override bool Equals( object? obj )
         {
             if ( obj == null )
             {
                 return false;
             }
 
-            if ( !( obj is SteamID sid ) )
+            if ( obj is not SteamID sid )
             {
                 return false;
             }
@@ -723,14 +710,14 @@ namespace SteamKit2
         /// <returns>
         /// The result of the operator.
         /// </returns>
-        public static bool operator ==( SteamID a, SteamID b )
+        public static bool operator ==( SteamID? a, SteamID? b )
         {
             if ( ReferenceEquals( a, b ) )
             {
                 return true;
             }
 
-            if ( ( ( object )a == null ) || ( ( object )b == null ) )
+            if ( a is null || b is null )
             {
                 return false;
             }
@@ -746,7 +733,7 @@ namespace SteamKit2
         /// <returns>
         /// The result of the operator.
         /// </returns>
-        public static bool operator !=( SteamID a, SteamID b )
+        public static bool operator !=( SteamID? a, SteamID? b )
         {
             return !( a == b );
         }
@@ -761,6 +748,5 @@ namespace SteamKit2
         {
             return steamid.Data.GetHashCode();
         }
-
     }
 }

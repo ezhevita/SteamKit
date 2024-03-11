@@ -133,7 +133,7 @@ namespace SteamKit2
             /// Gets the game data blob.
             /// </summary>
             /// <value>The game data blob.</value>
-            public byte[] GameDataBlob { get; private set; }
+            public byte[]? GameDataBlob { get; private set; }
 
             /// <summary>
             /// Gets the name.
@@ -145,7 +145,7 @@ namespace SteamKit2
             /// Gets the avatar hash.
             /// </summary>
             /// <value>The avatar hash.</value>
-            public byte[] AvatarHash { get; private set; }
+            public byte[]? AvatarHash { get; private set; }
 
             /// <summary>
             /// Gets the last log off.
@@ -174,11 +174,6 @@ namespace SteamKit2
             /// </summary>
             /// <value>The online session instances.</value>
             public uint OnlineSessionInstances { get; private set; }
-            /// <summary>
-            /// Gets the published session ID.
-            /// </summary>
-            /// <value>The published session ID.</value>
-            public uint PublishedSessionID { get; private set; }
 
 
             internal PersonaStateCallback( CMsgClientPersonaState.Friend friend )
@@ -212,7 +207,6 @@ namespace SteamKit2
                 this.ClanTag = friend.clan_tag;
 
                 this.OnlineSessionInstances = friend.online_session_instances;
-                this.PublishedSessionID = friend.published_instance_id;
             }
         }
 
@@ -285,11 +279,11 @@ namespace SteamKit2
             /// <value>
             /// The name of the clan.
             /// </value>
-            public string ClanName { get; private set; }
+            public string? ClanName { get; private set; }
             /// <summary>
             /// Gets the SHA-1 avatar hash.
             /// </summary>
-            public byte[] AvatarHash { get; private set; }
+            public byte[]? AvatarHash { get; private set; }
 
             /// <summary>
             /// Gets the total number of members in this clan.
@@ -430,7 +424,7 @@ namespace SteamKit2
             /// Gets the message.
             /// </summary>
             /// <value>The message.</value>
-            public string Message { get; private set; }
+            public string? Message { get; private set; }
 
 
             internal FriendMsgCallback( CMsgClientFriendMsgIncoming msg )
@@ -443,7 +437,7 @@ namespace SteamKit2
                 if ( msg.message != null )
                 {
                     this.Message = Encoding.UTF8.GetString( msg.message );
-                    this.Message = this.Message.TrimEnd( new[] { '\0' } ); // trim any extra null chars from the end
+                    this.Message = this.Message.TrimEnd( '\0' ); // trim any extra null chars from the end
                 }
             }
         }
@@ -474,7 +468,7 @@ namespace SteamKit2
             /// Gets the message.
             /// </summary>
             /// <value>The message.</value>
-            public string Message { get; private set; }
+            public string? Message { get; private set; }
 
 
             internal FriendMsgEchoCallback( CMsgClientFriendMsgIncoming msg )
@@ -487,7 +481,7 @@ namespace SteamKit2
                 if ( msg.message != null )
                 {
                     this.Message = Encoding.UTF8.GetString( msg.message );
-                    this.Message = this.Message.TrimEnd( new[] { '\0' } ); // trim any extra null chars from the end
+                    this.Message = this.Message.TrimEnd( '\0' ); // trim any extra null chars from the end
                 }
             }
         }
@@ -658,7 +652,7 @@ namespace SteamKit2
             /// <summary>
             /// Gets a list of <see cref="ChatMemberInfo"/> instances for each of the members of this chat room.
             /// </summary>
-            public ReadOnlyCollection<ChatMemberInfo> ChatMembers { get; private set; }
+            public ReadOnlyCollection<ChatMemberInfo>? ChatMembers { get; private set; }
 
 
             internal ChatEnterCallback( MsgClientChatEnter msg, byte[] payload )
@@ -677,29 +671,27 @@ namespace SteamKit2
 
                 NumChatMembers = msg.NumMembers;
 
-                using ( var ms = new MemoryStream( payload ) )
+                using var ms = new MemoryStream( payload );
+                // steamclient always attempts to read the chat room name, regardless of the enter response
+                ChatRoomName = ms.ReadNullTermString( Encoding.UTF8 );
+
+                if ( EnterResponse != EChatRoomEnterResponse.Success )
                 {
-                    // steamclient always attempts to read the chat room name, regardless of the enter response
-                    ChatRoomName = ms.ReadNullTermString( Encoding.UTF8 );
-
-                    if ( EnterResponse != EChatRoomEnterResponse.Success )
-                    {
-                        // the rest of the payload depends on a successful chat enter
-                        return;
-                    }
-
-                    var memberList = new List<ChatMemberInfo>();
-
-                    for ( int x = 0 ; x < NumChatMembers ; ++x )
-                    {
-                        var memberInfo = new ChatMemberInfo();
-                        memberInfo.ReadFromStream( ms );
-
-                        memberList.Add( memberInfo );
-                    }
-
-                    ChatMembers = new ReadOnlyCollection<ChatMemberInfo>( memberList );
+                    // the rest of the payload depends on a successful chat enter
+                    return;
                 }
+
+                var memberList = new List<ChatMemberInfo>();
+
+                for ( int x = 0; x < NumChatMembers; ++x )
+                {
+                    var memberInfo = new ChatMemberInfo();
+                    memberInfo.ReadFromStream( ms );
+
+                    memberList.Add( memberInfo );
+                }
+
+                ChatMembers = new ReadOnlyCollection<ChatMemberInfo>( memberList );
             }
         }
 
@@ -736,7 +728,7 @@ namespace SteamKit2
                 this.ChatMsgType = msg.ChatMsgType;
 
                 this.Message = Encoding.UTF8.GetString( payload );
-                this.Message = this.Message.TrimEnd( new[] { '\0' } ); // trim any extra null chars from the end
+                this.Message = this.Message.TrimEnd( '\0' ); // trim any extra null chars from the end
             }
         }
 
@@ -767,23 +759,21 @@ namespace SteamKit2
                 /// Gets the member information for a user that has joined the chat room.
                 /// This field is only populated when <see cref="StateChange"/> is <see cref="EChatMemberStateChange.Entered"/>.
                 /// </summary>
-                public ChatMemberInfo MemberInfo { get; private set; }
+                public ChatMemberInfo? MemberInfo { get; private set; }
 
 
                 internal StateChangeDetails( byte[] data )
                 {
-                    using ( MemoryStream ms = new MemoryStream( data ) )
-                    using ( BinaryReader br = new BinaryReader( ms ) )
-                    {
-                        ChatterActedOn = br.ReadUInt64();
-                        StateChange = ( EChatMemberStateChange )br.ReadInt32();
-                        ChatterActedBy = br.ReadUInt64();
+                    using MemoryStream ms = new MemoryStream( data );
+                    using BinaryReader br = new BinaryReader( ms );
+                    ChatterActedOn = br.ReadUInt64();
+                    StateChange = ( EChatMemberStateChange )br.ReadInt32();
+                    ChatterActedBy = br.ReadUInt64();
 
-                        if ( StateChange == EChatMemberStateChange.Entered )
-                        {
-                            MemberInfo = new ChatMemberInfo();
-                            MemberInfo.ReadFromStream( ms );
-                        }
+                    if ( StateChange == EChatMemberStateChange.Entered )
+                    {
+                        MemberInfo = new ChatMemberInfo();
+                        MemberInfo.ReadFromStream( ms );
                     }
                 }
             }
@@ -801,7 +791,7 @@ namespace SteamKit2
             /// <summary>
             /// Gets the state change info for <see cref="EChatInfoType.StateChange"/> member info updates.
             /// </summary>
-            public StateChangeDetails StateChangeInfo { get; private set; }
+            public StateChangeDetails? StateChangeInfo { get; private set; }
 
 
             internal ChatMemberInfoCallback( MsgClientChatMemberInfo msg, byte[] payload )

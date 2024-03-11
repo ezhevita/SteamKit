@@ -13,6 +13,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using ProtoBuf;
+using SteamKit2.Authentication;
 using SteamKit2.Internal;
 
 namespace SteamKit2
@@ -28,12 +29,19 @@ namespace SteamKit2
         long currentJobId = 0;
         DateTime processStartTime;
 
-        object callbackLock = new object();
+        object callbackLock = new();
         Queue<ICallbackMsg> callbackQueue;
 
         Dictionary<EMsg, Action<IPacketMsg>> dispatchMap;
 
         internal AsyncJobManager jobManager;
+
+        SteamAuthentication? _authentication = null;
+
+        /// <summary>
+        /// Handler used for authenticating on Steam.
+        /// </summary>
+        public SteamAuthentication Authentication => _authentication ??= new SteamAuthentication( this );
 
         /// <summary>
         /// Initializes a new instance of the <see cref="SteamClient"/> class with the default configuration.
@@ -44,16 +52,40 @@ namespace SteamKit2
         }
 
         /// <summary>
+        /// Initializes a new instance of the <see cref="SteamClient"/> class a specific identifier.
+        /// </summary>
+        /// <param name="identifier">A specific identifier to be used to uniquely identify this instance.</param>
+        public SteamClient( string identifier )
+            : this( SteamConfiguration.CreateDefault(), identifier )
+        {
+        }
+
+        /// <summary>
         /// Initializes a new instance of the <see cref="SteamClient"/> class with a specific configuration.
         /// </summary>
         /// <param name="configuration">The configuration to use for this client.</param>
         /// <exception cref="ArgumentNullException">The configuration object is <c>null</c></exception>
         public SteamClient( SteamConfiguration configuration )
-            : base( configuration )
+            : this( configuration, Guid.NewGuid().ToString( "N" ) )
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="SteamClient"/> class with a specific configuration and identifier
+        /// </summary>
+        /// <param name="configuration">The configuration to use for this client.</param>
+        /// <param name="identifier">A specific identifier to be used to uniquely identify this instance.</param>
+        /// <exception cref="ArgumentNullException">The configuration object or identifier is <c>null</c></exception>
+        /// <exception cref="ArgumentException">The identifier is an empty string</exception>
+        public SteamClient( SteamConfiguration configuration, string identifier )
+            : base( configuration, identifier )
         {
             callbackQueue = new Queue<ICallbackMsg>();
 
-            this.handlers = new OrderedDictionary();
+            this.handlers = [];
+
+            // Start calculating machine info so that it is (hopefully) ready by the time we get to logging in.
+            HardwareUtils.Init( configuration.MachineInfoProvider );
 
             // add this library's handlers
             // notice: SteamFriends should be added before SteamUser due to AccountInfoCallback
@@ -70,6 +102,8 @@ namespace SteamKit2
             this.AddHandler( new SteamUnifiedMessages() );
             this.AddHandler( new SteamScreenshots() );
             this.AddHandler( new SteamMatchmaking() );
+            this.AddHandler( new SteamNetworking() );
+            this.AddHandler( new SteamContent() );
 
             using ( var process = Process.GetCurrentProcess() )
             {
@@ -79,7 +113,6 @@ namespace SteamKit2
             dispatchMap = new Dictionary<EMsg, Action<IPacketMsg>>
             {
                 { EMsg.ClientCMList, HandleCMList },
-                { EMsg.ClientServerList, HandleServerList },
 
                 // to support asyncjob life time
                 { EMsg.JobHeartbeat, HandleJobHeartbeat },
@@ -98,6 +131,8 @@ namespace SteamKit2
         /// <exception cref="InvalidOperationException">A handler of that type is already registered.</exception>
         public void AddHandler( ClientMsgHandler handler )
         {
+            ArgumentNullException.ThrowIfNull( handler );
+
             if ( handlers.Contains( handler.GetType() ) )
             {
                 throw new InvalidOperationException( string.Format( "A handler of type \"{0}\" is already registered.", handler.GetType() ) );
@@ -132,7 +167,7 @@ namespace SteamKit2
         /// <returns>
         /// A registered handler on success, or null if the handler could not be found.
         /// </returns>
-        public T GetHandler<T>()
+        public T? GetHandler<T>()
             where T : ClientMsgHandler
         {
             Type type = typeof( T );
@@ -153,7 +188,7 @@ namespace SteamKit2
         /// This function does not dequeue the callback, you must call FreeLastCallback after processing it.
         /// </summary>
         /// <returns>The next callback in the queue, or null if no callback is waiting.</returns>
-        public ICallbackMsg GetCallback()
+        public ICallbackMsg? GetCallback()
         {
             return GetCallback( false );
         }
@@ -162,7 +197,7 @@ namespace SteamKit2
         /// </summary>
         /// <param name="freeLast">if set to <c>true</c> this function also frees the last callback if one existed.</param>
         /// <returns>The next callback in the queue, or null if no callback is waiting.</returns>
-        public ICallbackMsg GetCallback( bool freeLast )
+        public ICallbackMsg? GetCallback( bool freeLast )
         {
             lock ( callbackLock )
             {
@@ -178,7 +213,7 @@ namespace SteamKit2
         /// This function does not dequeue the callback, you must call FreeLastCallback after processing it.
         /// </summary>
         /// <returns>The callback object from the queue.</returns>
-        public ICallbackMsg WaitForCallback()
+        public ICallbackMsg? WaitForCallback()
         {
             return WaitForCallback( false );
         }
@@ -188,7 +223,7 @@ namespace SteamKit2
         /// </summary>
         /// <param name="timeout">The length of time to block.</param>
         /// <returns>A callback object from the queue if a callback has been posted, or null if the timeout has elapsed.</returns>
-        public ICallbackMsg WaitForCallback( TimeSpan timeout )
+        public ICallbackMsg? WaitForCallback( TimeSpan timeout )
         {
             lock ( callbackLock )
             {
@@ -222,7 +257,7 @@ namespace SteamKit2
         /// <param name="freeLast">if set to <c>true</c> this function also frees the last callback.</param>
         /// <param name="timeout">The length of time to block.</param>
         /// <returns>A callback object from the queue if a callback has been posted, or null if the timeout has elapsed.</returns>
-        public ICallbackMsg WaitForCallback( bool freeLast, TimeSpan timeout )
+        public ICallbackMsg? WaitForCallback( bool freeLast, TimeSpan timeout )
         {
             lock ( callbackLock )
             {
@@ -326,7 +361,7 @@ namespace SteamKit2
         /// Called when a client message is received from the network.
         /// </summary>
         /// <param name="packetMsg">The packet message.</param>
-        protected override bool OnClientMsgReceived( IPacketMsg packetMsg )
+        protected override bool OnClientMsgReceived( IPacketMsg? packetMsg )
         {
             // let the underlying CMClient handle this message first
             if ( !base.OnClientMsgReceived( packetMsg ) )
@@ -334,9 +369,7 @@ namespace SteamKit2
                 return false;
             }
 
-            bool haveFunc = dispatchMap.TryGetValue( packetMsg.MsgType, out var handlerFunc );
-
-            if ( haveFunc )
+            if ( dispatchMap.TryGetValue( packetMsg.MsgType, out var handlerFunc ) )
             {
                 // we want to handle some of the clientmsgs before we pass them along to registered handlers
                 handlerFunc( packetMsg );
@@ -346,7 +379,7 @@ namespace SteamKit2
             foreach ( DictionaryEntry kvp in handlers )
             {
                 var key = (Type) kvp.Key;
-                var value = (ClientMsgHandler) kvp.Value;
+                var value = (ClientMsgHandler) kvp.Value!;
 
                 try
                 {
@@ -354,14 +387,14 @@ namespace SteamKit2
                 }
                 catch ( ProtoException ex )
                 {
-                    DebugLog.WriteLine( "SteamClient", "'{0}' handler failed to (de)serialize a protobuf: '{1}'", key.Name, ex.Message );
-                    Disconnect();
+                    LogDebug( nameof( SteamClient ), $"'{key.Name}' handler failed to (de)serialize a protobuf: {ex}" );
+                    Disconnect( userInitiated: false );
                     return false;
                 }
                 catch ( Exception ex )
                 {
-                    DebugLog.WriteLine( "SteamClient", "Unhandled '{0}' exception from '{1}' handler: '{2}'", ex.GetType().Name, key.Name, ex.Message );
-                    Disconnect();
+                    LogDebug( nameof( SteamClient ), $"Unhandled exception from '{key.Name}' handler: {ex}" );
+                    Disconnect( userInitiated: false );
                     return false;
                 }
             }
@@ -407,12 +440,6 @@ namespace SteamKit2
             var cmMsg = new ClientMsgProtobuf<CMsgClientCMList>( packetMsg );
 
             PostCallback( new CMListCallback( cmMsg.Body ) );
-        }
-        void HandleServerList( IPacketMsg packetMsg )
-        {
-            var listMsg = new ClientMsgProtobuf<CMsgClientServerList>( packetMsg );
-
-            PostCallback( new ServerListCallback( listMsg.Body ) );
         }
 
         void HandleJobHeartbeat( IPacketMsg packetMsg )

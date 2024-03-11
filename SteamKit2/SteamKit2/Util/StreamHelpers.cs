@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Text;
 
@@ -7,15 +8,15 @@ namespace SteamKit2
     internal static class StreamHelpers
     {
         [ThreadStatic]
-        static byte[] data;
+        static byte[]? data;
 
+        [MemberNotNull(nameof(data))]
         static void EnsureInitialized()
         {
-            if ( data == null )
-                data = new byte[ 8 ];
+            data ??= new byte[ 8 ];
         }
 
-        public static Int16 ReadInt16(this Stream stream)
+        public static short ReadInt16(this Stream stream)
         {
             EnsureInitialized();
 
@@ -23,7 +24,7 @@ namespace SteamKit2
             return BitConverter.ToInt16( data, 0 );
         }
 
-        public static UInt16 ReadUInt16(this Stream stream)
+        public static ushort ReadUInt16(this Stream stream)
         {
             EnsureInitialized();
 
@@ -31,7 +32,7 @@ namespace SteamKit2
             return BitConverter.ToUInt16( data, 0);
         }
 
-        public static Int32 ReadInt32(this Stream stream)
+        public static int ReadInt32(this Stream stream)
         {
             EnsureInitialized();
 
@@ -39,7 +40,7 @@ namespace SteamKit2
             return BitConverter.ToInt32( data, 0 );
         }
 
-        public static Int64 ReadInt64(this Stream stream)
+        public static long ReadInt64(this Stream stream)
         {
             EnsureInitialized();
 
@@ -47,7 +48,7 @@ namespace SteamKit2
             return BitConverter.ToInt64( data, 0 );
         }
 
-        public static UInt32 ReadUInt32(this Stream stream)
+        public static uint ReadUInt32(this Stream stream)
         {
             EnsureInitialized();
 
@@ -55,7 +56,7 @@ namespace SteamKit2
             return BitConverter.ToUInt32( data, 0);
         }
 
-        public static UInt64 ReadUInt64(this Stream stream)
+        public static ulong ReadUInt64(this Stream stream)
         {
             EnsureInitialized();
 
@@ -75,24 +76,22 @@ namespace SteamKit2
         {
             int characterSize = encoding.GetByteCount( "e" );
 
-            using ( MemoryStream ms = new MemoryStream() )
+            using MemoryStream ms = new MemoryStream();
+
+            while ( true )
             {
+                byte[] data = new byte[ characterSize ];
+                stream.Read( data, 0, characterSize );
 
-                while ( true )
+                if ( encoding.GetString( data, 0, characterSize ) == "\0" )
                 {
-                    byte[] data = new byte[ characterSize ];
-                    stream.Read( data, 0, characterSize );
-
-                    if ( encoding.GetString( data, 0, characterSize ) == "\0" )
-                    {
-                        break;
-                    }
-
-                    ms.Write( data, 0, data.Length );
+                    break;
                 }
 
-                return encoding.GetString( ms.GetBuffer(), 0, ( int )ms.Length );
+                ms.Write( data, 0, data.Length );
             }
+
+            return encoding.GetString( ms.GetBuffer(), 0, ( int )ms.Length );
         }
 
         public static void WriteNullTermString( this Stream stream, string value, Encoding encoding )
@@ -103,6 +102,17 @@ namespace SteamKit2
             data[ dataLength ] = 0x00; // '\0'
 
             stream.Write( data, 0, data.Length );
+        }
+
+        public static int ReadAll( this Stream stream, byte[] buffer )
+        {
+            int bytesRead;
+            int totalRead = 0;
+            while ( ( bytesRead = stream.Read( buffer, totalRead, buffer.Length - totalRead ) ) != 0 )
+            {
+                totalRead += bytesRead;
+            }
+            return totalRead;
         }
     }
 }

@@ -42,13 +42,10 @@ namespace SteamKit2
 
         static async Task<IReadOnlyCollection<ServerRecord>> LoadCoreAsync( SteamConfiguration configuration, int? maxNumServers, CancellationToken cancellationToken )
         {
-            if ( configuration == null )
-            {
-                throw new ArgumentNullException( nameof(configuration) );
-            }
+            ArgumentNullException.ThrowIfNull( configuration );
 
-            var directory = configuration.GetAsyncWebAPIInterface( "ISteamDirectory" );
-            var args = new Dictionary<string, object>
+            using var directory = configuration.GetAsyncWebAPIInterface( "ISteamDirectory" );
+            var args = new Dictionary<string, object?>
             {
                 ["cellid"] = configuration.CellID.ToString( CultureInfo.InvariantCulture )
             };
@@ -77,7 +74,7 @@ namespace SteamKit2
 
                 foreach ( var child in socketList.Children )
                 {
-                    if ( !ServerRecord.TryCreateSocketServer( child.Value, out var record ))
+                    if ( child.Value is null || !ServerRecord.TryCreateSocketServer( child.Value, out var record ))
                     {
                         continue;
                     }
@@ -87,6 +84,11 @@ namespace SteamKit2
 
             foreach ( var child in websocketList.Children )
             {
+                if ( child.Value is null )
+                {
+                    continue;
+                }
+
                 serverRecords.Add( ServerRecord.CreateWebSocketServer( child.Value ) );
             }
 

@@ -2,7 +2,6 @@
 using System.IO;
 using SteamKit2;
 using Xunit;
-using System.Text;
 
 namespace Tests
 {
@@ -328,7 +327,7 @@ namespace Tests
             // Test every possible truncation boundary we have.
             for ( int i = 0; i < TestObjectHex.Length; i += 2 )
             {
-                var binary = Utils.DecodeHexString( TestObjectHex.Substring( 0, i ) );
+                var binary = Utils.DecodeHexString( TestObjectHex[ ..i ] );
                 var kv = new KeyValue();
                 bool success;
                 using ( var ms = new MemoryStream( binary ) )
@@ -423,10 +422,8 @@ namespace Tests
             {
                 kv.SaveToStream( ms, asBinary: false );
                 ms.Seek( 0, SeekOrigin.Begin );
-                using ( var reader = new StreamReader( ms ) )
-                {
-                    text = reader.ReadToEnd();
-                }
+                using var reader = new StreamReader( ms );
+                text = reader.ReadToEnd();
             }
 
             Assert.Equal( expected, text );
@@ -468,14 +465,59 @@ namespace Tests
             {
                 kv.SaveToStream( ms, asBinary: false );
                 ms.Seek( 0, SeekOrigin.Begin );
-                using ( var reader = new StreamReader( ms ) )
-                {
-                    text = reader.ReadToEnd();
-                }
+                using var reader = new StreamReader( ms );
+                text = reader.ReadToEnd();
             }
 
             var expectedValue = "\"key\"\n{\n\t\"slashes\"\t\t\"\\\\o/\"\n\t\"newline\"\t\t\"\\r\\n\"\n}\n";
             Assert.Equal( expectedValue, text );
+        }
+
+        [Fact]
+        public void KeyValuesTextPreserveEmptyObjects()
+        {
+            var kv = new KeyValue( "key" );
+            kv.Children.Add( new KeyValue( "emptyObj" ) );
+            kv.Children.Add( new KeyValue( "emptyString", string.Empty ) );
+
+            string text;
+            using ( var ms = new MemoryStream() )
+            {
+                kv.SaveToStream( ms, asBinary: false );
+                ms.Seek( 0, SeekOrigin.Begin );
+                using var reader = new StreamReader( ms );
+                text = reader.ReadToEnd();
+            }
+
+            var expectedValue = "\"key\"\n{\n\t\"emptyObj\"\n\t{\n\t}\n\t\"emptyString\"\t\t\"\"\n}\n";
+            Assert.Equal( expectedValue, text );
+        }
+
+        [Fact]
+        public void KeyValuesBinaryPreserveEmptyObjects()
+        {
+            var expectedHexString = "006B65790000656D7074794F626A000801656D707479537472696E6700000808";
+
+            var kv = new KeyValue( "key" );
+            kv.Children.Add( new KeyValue( "emptyObj" ) );
+            kv.Children.Add( new KeyValue( "emptyString", string.Empty ) );
+            
+            var deserializedKv = new KeyValue();
+            byte[] binaryValue;
+            using ( var ms = new MemoryStream() )
+            {
+                kv.SaveToStream( ms, asBinary: true );
+                ms.Seek( 0, SeekOrigin.Begin );
+                binaryValue = ms.ToArray();
+                deserializedKv.TryReadAsBinary( ms );
+            }
+
+            var hexValue = BitConverter.ToString( binaryValue ).Replace( "-", "" );
+
+            Assert.Equal( expectedHexString, hexValue );
+            Assert.Null( deserializedKv["emptyObj"].Value );
+            Assert.Empty( deserializedKv["emptyObj"].Children );
+            Assert.Equal( string.Empty, deserializedKv["emptyString"].Value );
         }
 
         [Fact]
