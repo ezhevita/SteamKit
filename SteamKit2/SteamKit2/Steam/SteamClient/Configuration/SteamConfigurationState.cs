@@ -22,7 +22,7 @@ namespace SteamKit2
         public IServerListProvider ServerListProvider;
         public EUniverse Universe;
         public Uri WebAPIBaseAddress;
-        public IWebProxy WebProxy;
+        public IWebProxy? WebProxy;
         public string WebAPIKey;
     }
 }

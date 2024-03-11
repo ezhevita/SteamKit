@@ -26,7 +26,7 @@ namespace SteamKit2
 
         public void Connect(EndPoint endPoint, int timeout = 5000) => Connect(endPoint, null, timeout);
 
-        public void Connect(EndPoint endPoint, IWebProxy proxy, int timeout = 5000)
+        public void Connect(EndPoint endPoint, IWebProxy? proxy, int timeout = 5000)
         {
             var newContext = new WebSocketContext(this, endPoint, proxy);
             var oldContext = Interlocked.Exchange(ref currentContext, newContext);
